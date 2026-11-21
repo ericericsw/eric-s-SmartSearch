@@ -4,7 +4,7 @@
 // @namespace   SmartSearch-Cloud
 // @author      Superlatanium, nekolor, ericeric91, claude
 // @include     https://forums.e-hentai.org/index.php*showforum=*
-// @version     3.1.0
+// @version     3.2.0
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
@@ -17,11 +17,11 @@
 // @connect     raw.githubusercontent.com
 // ==/UserScript==
 
-var version = '3.1.0';
+var version = '3.2.0';
 
+// Board 78 (WTB) is not supported for now: its posts only describe wanted equipment in free text (SMS-USR-080)
 const FORUM_LABELS = {
   '77': 'WTS',
-  '78': 'WTB',
   '90': 'ISK'
 };
 
@@ -35,7 +35,7 @@ const DEFAULT_SETTINGS = {
   daysAgoLimit: 60,
   wildGuess: false,
   hideLocked: false,
-  forumVersions: { '77': '', '78': '', '90': '' }
+  forumVersions: { '77': '', '90': '' }
 };
 
 // SmartSearch-Cloud keeps its own storage and never reads the original HV SmartSearch's or 2.x's (SMS-USR-078)
@@ -114,12 +114,12 @@ function applyRuntimeSettings() {
 const recent_searches_max = 18;
 
 var forumMatch = window.location.href.match(/showforum=(\d+)/);
-if (!forumMatch || (forumMatch[1] !== '77' && forumMatch[1] !== '78' && forumMatch[1] !== '90'))
+if (!forumMatch || (forumMatch[1] !== '77' && forumMatch[1] !== '90'))
   return;
 var forum = forumMatch[1];
 var forumLabel = FORUM_LABELS[forum] || ('Forum ' + forum);
 
-// Independent IndexedDB database per forum board (77=WTS, 78=WTB, 90=ISK) (SMS-USR-022)
+// Independent IndexedDB database per forum board (77=WTS, 90=ISK) (SMS-USR-022)
 var DB_NAME = 'SmartSearchCloudDb_' + forum;
 
 // Register Tampermonkey menu commands (SMS-USR-031)
@@ -2142,7 +2142,6 @@ function openSettingsModal() {
   overlay.appendChild(panel);
 
   var wtsVer = escapeHtml(formatVersionLabel(settings.forumVersions && settings.forumVersions['77']));
-  var wtbVer = escapeHtml(formatVersionLabel(settings.forumVersions && settings.forumVersions['78']));
   var iskVer = escapeHtml(formatVersionLabel(settings.forumVersions && settings.forumVersions['90']));
   var daysLimitVal = clampDaysLimit(settings.daysAgoLimit);
 
@@ -2171,7 +2170,6 @@ function openSettingsModal() {
       <div style="color:#bbb;font-size:12px;margin-bottom:8px;">
         Each forum board maintains its own isolated IndexedDB database and is only downloaded when you click <strong>Update Database</strong> inside that board:<br/>
         • <strong>WTS (77)</strong> [SmartSearchCloudDb_77]: ${wtsVer}<br/>
-        • <strong>WTB (78)</strong> [SmartSearchCloudDb_78]: ${wtbVer}<br/>
         • <strong>ISK (90)</strong> [SmartSearchCloudDb_90]: ${iskVer}
       </div>
       <div style="margin-top:6px;">
@@ -2322,7 +2320,7 @@ function openSettingsModal() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-Forum Isolated IndexedDB Storage Layer (SmartSearchCloudDb_77 / _78 / _90)
+// Per-Forum Isolated IndexedDB Storage Layer (SmartSearchCloudDb_77 / _90)
 // ─────────────────────────────────────────────────────────────────────────────
 
 var isUpdatingDb = false;
