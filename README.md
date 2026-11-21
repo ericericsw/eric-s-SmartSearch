@@ -11,14 +11,11 @@ It downloads a ready-made database from this repo's Releases instead of crawling
 1. Install [Tampermonkey](https://www.tampermonkey.net/) for your browser and finish the setup it asks for
    (some browsers require you to allow userscripts / extensions developer mode).
    安裝瀏覽器用的 Tampermonkey，並完成它要求的設定（部分瀏覽器需要允許執行使用者腳本或開啟擴充功能的開發人員模式）。
-2. If you installed the earlier "HV SmartSearch" 2.x cloud edition, remove it in Tampermonkey first.
-   Otherwise both scripts run and you get two search bars.
-   如果裝過早期的「HV SmartSearch」2.x 雲端版，請先在 Tampermonkey 移除，否則兩支腳本會同時執行、出現兩組搜尋列。
-3. Open [Install SmartSearch-Cloud](https://raw.githubusercontent.com/ericericsw/eric-s-SmartSearch/main/SmartSearch.user.js).
+2. Open [Install SmartSearch-Cloud](https://raw.githubusercontent.com/ericericsw/eric-s-SmartSearch/main/SmartSearch-Cloud.user.js).
    開啟上面的安裝連結。
-4. Click **Install** in Tampermonkey.
+3. Click **Install** in Tampermonkey.
    在 Tampermonkey 的畫面按 **Install（安裝）**。
-5. Open the WTS or Isekai Trade board and click **Update Database** once to download that board's database.
+4. Open the WTS or Isekai Trade board and click **Update Database** once to download that board's database.
    開啟 WTS 或 Isekai Trade 版塊，按一次 **Update Database** 下載該版塊的資料庫。
 
 If the link only shows the source code, Tampermonkey is not enabled or not allowed to run userscripts yet.
@@ -28,18 +25,21 @@ Check its settings, then open the link again.
 
 ## Updates / 更新
 
-- The install link never changes. Tampermonkey checks it for new versions on its own and updates the script.
-  安裝連結不會變。Tampermonkey 會自動從這個連結檢查新版並更新。
+- The install link never changes. The script declares it as its `@updateURL` / `@downloadURL`,
+  so Tampermonkey checks it for new versions on its own and updates the script.
+  安裝連結不會變。腳本標頭的 `@updateURL`／`@downloadURL` 就是這個連結，Tampermonkey 會自動從這裡檢查新版並更新。
 - To check right away: open the Tampermonkey menu and choose **Check for userscript updates**.
   想立即檢查：開啟 Tampermonkey 選單，選 **Check for userscript updates（檢查使用者腳本更新）**。
 - The database is separate from the script. Click **Update Database** on a board to get its newest data;
   the button shows the version you are using and skips the download when you are already up to date.
   資料庫與腳本分開更新：在版塊頁按 **Update Database** 取得最新資料；按鈕會顯示目前使用的版本，已是最新時不會重複下載。
 
-For maintainers: every script release must raise `@version` and replace `SmartSearch.user.js` on `main`.
+For maintainers: every script release must raise `@version` and replace `SmartSearch-Cloud.user.js` on `main`;
+Tampermonkey only updates when `@version` goes up. Keep the file name: it is the update URL players already have.
 The database Releases are published by the server; do not edit or delete them by hand.
 
-維護者：每次發布腳本都要調高 `@version`，並覆蓋 `main` 上的 `SmartSearch.user.js`。
+維護者：每次發布腳本都要調高 `@version`，並覆蓋 `main` 上的 `SmartSearch-Cloud.user.js`；`@version` 沒有調高時 Tampermonkey 不會更新。
+不要再改檔名，玩家的更新網址就是這個檔案。
 資料庫 Releases 由伺服器自動發布，請勿手動修改或刪除。
 
 ## Database / 資料庫

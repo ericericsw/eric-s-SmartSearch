@@ -4,7 +4,7 @@
 // @namespace   SmartSearch-Cloud
 // @author      Superlatanium, nekolor, ericeric91, claude
 // @include     https://forums.e-hentai.org/index.php*showforum=*
-// @version     3.2.0
+// @version     3.2.1
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
@@ -15,9 +15,11 @@
 // @connect     objects.githubusercontent.com
 // @connect     release-assets.githubusercontent.com
 // @connect     raw.githubusercontent.com
+// @updateURL   https://raw.githubusercontent.com/ericericsw/eric-s-SmartSearch/main/SmartSearch-Cloud.user.js
+// @downloadURL https://raw.githubusercontent.com/ericericsw/eric-s-SmartSearch/main/SmartSearch-Cloud.user.js
 // ==/UserScript==
 
-var version = '3.2.0';
+var version = '3.2.1';
 
 // Board 78 (WTB) is not supported for now: its posts only describe wanted equipment in free text (SMS-USR-080)
 const FORUM_LABELS = {
