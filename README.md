@@ -84,9 +84,11 @@ The database Releases are published by the server; do not edit or delete them by
   結果分頁右上角的 **Export／Import** 把搜尋條件存成一行文字，可自己保存或分享；用 Import 貼上即還原同樣的條件並搜尋。
 - Lowest EID and thread title filters, Ignore for threads and posts, and Backup / Restore / Delete for each board's database.
   Lowest EID 與討論串標題過濾、忽略討論串或貼文，以及各版塊資料庫的備份／還原／刪除。
-- Settings: language (English by default; 中文 adds Chinese notes to the Settings panel), Full Rebuild or Incremental update, exclude pinned threads, hide locked threads, show struck-out lines,
+- **Priority Shops** (in Settings): shop owners by name or UID; their lines are listed first in the results, in the order you drag them into, whatever sort you pick.
+  設定中的 **優先店家**：輸入店主名稱或 UID，這些店家的裝備依你拖曳排好的順序排在搜尋結果最前面，不論選哪種排序。
+- Settings: language (English by default; 中文 shows the whole script in Chinese), Full Rebuild or Incremental update, exclude pinned threads, hide locked threads, show struck-out lines,
   wild guess prices without units, highlight old posts, and a list of posters (UID or name) to exclude.
-  設定：語系（預設英文，選「中文」時設定面板加註中文）、完全重建或增量合併、排除置頂討論串、隱藏已鎖定討論串、顯示被刪除線劃掉的行、寬鬆猜測沒有單位的價格、標示過舊的貼文，以及要排除的發文者（UID 或名稱）。
+  設定：語系（預設英文，選「中文」時整個腳本顯示中文）、完全重建或增量合併、排除置頂討論串、隱藏已鎖定討論串、顯示被刪除線劃掉的行、寬鬆猜測沒有單位的價格、標示過舊的貼文，以及要排除的發文者（UID 或名稱）。
 
 It only activates on the WTS (77) and Isekai Trade (90) boards. WTB is not supported for now.
 只在 WTS（77）與 Isekai Trade（90）版塊啟用，WTB 暫不支援。

@@ -4,7 +4,7 @@
 // @namespace   SmartSearch-Cloud
 // @author      Superlatanium, nekolor, ericeric91, claude
 // @include     https://forums.e-hentai.org/index.php*showforum=*
-// @version     3.4.0
+// @version     3.5.0
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
@@ -19,7 +19,7 @@
 // ==/UserScript==
 
 // Shown in the Settings panel title: read from the header's @version so the two never drift apart (SMS-USR-085)
-var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.4.0';
+var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.5.0';
 
 // Board 78 (WTB) is not supported for now: its posts only describe wanted equipment in free text (SMS-USR-080)
 const FORUM_LABELS = {
@@ -37,20 +37,355 @@ const DEFAULT_SETTINGS = {
   daysAgoLimit: 60,
   wildGuess: false,
   hideLocked: false,
-  language: 'en', // Settings panel language: 'en' (default) or 'zh' adds the Chinese notes (SMS-USR-087)
+  language: 'en', // interface language: 'en' (default) or 'zh' (SMS-USR-087)
+  priorityShops: [], // [{ displayName, uid }]: their lines are listed first, in this order (SMS-USR-088)
   forumVersions: { '77': '', '90': '' }
 };
 
-// Settings panel languages (SMS-USR-087). English is the default; Chinese only adds notes after the English labels.
+// Interface languages (SMS-USR-087). English is the default.
 var UI_LANGUAGES = [['en', 'English'], ['zh', '中文']];
 
 function uiLanguage(cfg) {
   return cfg && cfg.language === 'zh' ? 'zh' : 'en';
 }
 
-// ' (<Chinese note>)' in the Chinese language, nothing in English
-function zhNote(lang, text) {
-  return lang === 'zh' ? ' (' + escapeHtml(text) + ')' : '';
+// Chinese interface texts (SMS-USR-087), keyed by the English text; {0}, {1} ... are filled in by tl().
+// Equipment names are shown in Chinese too, but keywords still match the English names in the forum posts.
+var I18N_ZH = {
+  // forum bar
+  '⚙️ Settings': '⚙️ 設定',
+  '🔄 Update {0} Database': '🔄 更新 {0} 資料庫',
+  'Use regular expression in search field? (unticked: words in any order, e.g. pha elem)': '關鍵字使用正規表示式？（未勾選：多個詞不分順序，例如 pha elem）',
+  'e.g. pha elem (press ? for syntax)': '例如 pha elem（按 ? 看語法）',
+  'Keyword syntax and examples': '關鍵字語法與範例',
+  'Filter Search': '篩選搜尋',
+  'Search this keyword now; more conditions can be added in the results tab': '立即搜尋這個關鍵字；可在結果分頁再加入其他條件',
+  'Open Search Window': '開啟搜尋視窗',
+  'Open an empty search tab: set the conditions there, then press Search': '開啟空白的搜尋分頁：在那裡設定條件後按「搜尋」',
+  'String is too short': '關鍵字太短',
+  "The browser blocked the new tab, so SmartSearch's results can't be opened. Please allow pop-ups from https://forums.e-hentai.org/": '瀏覽器擋下了新分頁，無法開啟 SmartSearch 的搜尋結果。請允許 https://forums.e-hentai.org/ 開啟彈出式視窗',
+  'Not downloaded': '尚未下載',
+  'not downloaded': '尚未下載',
+  'Click to download the latest {0} database from GitHub Releases (skipped when already up to date)': '點擊從 GitHub Releases 下載最新的 {0} 資料庫（已是最新時略過）',
+  'Update Database ({0})': '更新資料庫（{0}）',
+  'Full Rebuild': '完全重建',
+  'Incremental': '增量合併',
+  '{0} DB [{1}]': '{0} 資料庫 [{1}]',
+  'Busy, please wait...': '忙碌中，請稍候…',
+  'Downloading {0}...': '正在下載 {0}…',
+  'Downloading {0} from {1}...': '正在從 {1} 下載 {0}…',
+  'Already up to date ({0})': '已是最新（{0}）',
+  'Update complete ✓ ({0} threads, {1})': '更新完成 ✓（{0} 個討論串，{1}）',
+  'Update failed': '更新失敗',
+  'custom base URL': '自訂來源網址',
+  'latest release': '最新發布',
+  '{0} (no manifest)': '{0}（無 manifest）',
+  'Invalid manifest.json': 'manifest.json 格式錯誤',
+  '{0} is not in the latest database release {1}': '最新的資料庫發布 {1} 中沒有 {0}',
+  'Invalid payload in {0}': '{0} 的內容格式錯誤',
+  'Rejected {0}: file is for forum {1}, not {2}': '已拒絕 {0}：這是 {1} 版塊的檔案，不是 {2}',
+  'Refusing empty cloud snapshot in Full Rebuild mode ({0} has 0 threads; keeping {1} local threads)': '完全重建模式不接受空的雲端資料（{0} 沒有討論串；保留本機 {1} 個討論串）',
+  'Invalid gzip JSON from {0}': '{0} 的 gzip JSON 格式錯誤',
+  'Invalid JSON from {0}': '{0} 的 JSON 格式錯誤',
+  'HTTP {0} fetching {1}': '下載 {1} 時發生 HTTP {0}',
+  'Network error fetching {0}': '下載 {0} 時網路錯誤',
+  'Timeout fetching {0}': '下載 {0} 逾時',
+  'Aborted fetching {0}': '下載 {0} 被中止',
+  'Manage Database': '管理資料庫',
+  'Backup': '備份',
+  'Restore': '還原',
+  'Delete': '刪除',
+  'Another transaction is in progress, please wait.': '另一項資料庫作業進行中，請稍候。',
+  'Backup failed: {0}': '備份失敗：{0}',
+  'Database error': '資料庫錯誤',
+  'Select a file first': '請先選擇檔案',
+  'Invalid JSON': 'JSON 格式錯誤',
+  'Failed to parse the file\n\nSelect a valid SmartSearch_*.json file': '無法解析檔案\n\n請選擇有效的 SmartSearch_*.json 檔案',
+  'This file is for forum {0}, but you are currently in {1}.\nPlease navigate to the matching forum board to restore it.': '這是 {0} 版塊的檔案，但你目前在 {1}。\n請到對應的版塊還原。',
+  '[OK] Just merge the file with the {0} database\n[Cancel] Clear the {0} database and replace with the file': '[確定] 把檔案合併進 {0} 資料庫\n[取消] 清空 {0} 資料庫，改用檔案內容',
+  'Restored {0} threads': '已還原 {0} 個討論串',
+  'Restored {0} SmartSearch Database successfully': '已成功還原 {0} SmartSearch 資料庫',
+  'Failed to save restored database: {0}': '還原的資料庫儲存失敗：{0}',
+  'Failed to open database for restore: {0}': '無法開啟資料庫進行還原：{0}',
+  'Failed to read the file': '無法讀取檔案',
+  'This will delete the {0} ({1}) Database in the browser.\nOther forum boards will NOT be affected.\nAre you sure?': '這會刪除瀏覽器中的 {0}（{1}）資料庫。\n其他版塊不受影響。\n確定要刪除嗎？',
+  'Database deleted': '資料庫已刪除',
+  'Deleted {0} database.\nRefresh the page.': '已刪除 {0} 資料庫。\n請重新整理頁面。',
+  'Error deleting db {0}': '刪除資料庫失敗 {0}',
+  'Blocked deleting db {0}': '刪除資料庫 {0} 被阻擋',
+  '{0}: JSON stringify failed {1}': '{0}：JSON 序列化失敗 {1}',
+  '{0}: Database blocked': '{0}：資料庫被阻擋',
+  '{0}: Error on putReq {1}': '{0}：寫入失敗 {1}',
+  '{0}: Error on getRequest {1}': '{0}：讀取失敗 {1}',
+  '{0}: Error on transaction {1}': '{0}：交易失敗 {1}',
+  '{0}: Transaction aborted {1}': '{0}：交易中止 {1}',
+  '{0}: Error opening db {1}': '{0}：無法開啟資料庫 {1}',
+  '{0}: Failed to parse stored JSON': '{0}：無法解析儲存的 JSON',
+  // keyword syntax help
+  '<b>Keyword syntax</b> (RegEx box unticked)': '<b>關鍵字語法</b>（未勾選 RegEx；請輸入論壇貼文裡的英文裝備名稱）',
+  'Words in any order, each matching the start of a word, upper or lower case: <code>pha elem</code> finds <i>Legendary Phase Shoes of the Elementalist</i>': '多個詞不分順序，每個詞比對單字開頭，不分大小寫：<code>pha elem</code> 可找到 <i>Legendary Phase Shoes of the Elementalist</i>',
+  'Every word must be on the line: <code>leg fiery oak</code>, <code>peer pha sh</code>, <code>mag shade arca</code>': '每個詞都必須出現在同一行：<code>leg fiery oak</code>、<code>peer pha sh</code>、<code>mag shade arca</code>',
+  '<code>*</code> stands for any letters inside a word: <code>*sword</code> finds Shortsword, Longsword': '<code>*</code> 代表單字中的任意字母：<code>*sword</code> 可找到 Shortsword、Longsword',
+  'Only the text you see is searched, not the link addresses. Numbers work too: <code>lv.500</code>, <code>500k</code>': '只搜尋看得到的文字，不搜尋連結網址。數字也可以：<code>lv.500</code>、<code>500k</code>',
+  'Leave it empty to list every equipment line; otherwise type at least 3 characters.': '留空會列出所有裝備行；否則至少輸入 3 個字元。',
+  '<b>RegEx box ticked</b>: the keyword is a JavaScript regular expression, matched anywhere on the line: ': '<b>勾選 RegEx</b>：關鍵字是 JavaScript 正規表示式，比對整行任何位置：',
+  'Quality, type, prefix, suffix, slot and primary attributes are easier with the <b>Equipment filter</b> in the results tab.': '品質、類型、前綴、後綴、部位與主要屬性，用結果分頁的 <b>裝備篩選</b> 更方便。',
+  // results tab
+  'Search': '搜尋',
+  'Keyword, e.g. pha elem (empty = all lines)': '關鍵字，例如 pha elem（留空＝全部）',
+  'Use regular expression in the keyword box': '關鍵字使用正規表示式',
+  'All qualities': '全部品質',
+  'Level': '等級',
+  'Price': '價格',
+  'min': '最小',
+  'max': '最大',
+  'Sort: post edited (newest)': '排序：貼文編輯時間（新到舊）',
+  'Price: high to low': '價格：高到低',
+  'Price: low to high': '價格：低到高',
+  'Level: high to low': '等級：高到低',
+  'Level: low to high': '等級：低到高',
+  'ROLL %: high to low': 'ROLL %：高到低',
+  'ROLL %: low to high': 'ROLL %：低到高',
+  'Clear filters': '清除篩選',
+  'Search the database with the conditions above': '用上方條件搜尋資料庫',
+  'Show Stats': '顯示屬性欄',
+  'Hide Stats': '隱藏屬性欄',
+  '{0} match': '{0} 筆符合',
+  'Export': '匯出',
+  'Import': '匯入',
+  'Copy these search conditions as text, to keep or share': '把目前的搜尋條件複製成文字，方便保存或分享',
+  'Paste conditions made by Export, then search': '貼上「匯出」產生的條件後搜尋',
+  'Lowest EID': '最低 EID',
+  'Thread title': '討論串標題',
+  'Any': '不限',
+  'Includes': '包含',
+  'Excludes': '排除',
+  'Apply and search': '套用並搜尋',
+  'Close': '關閉',
+  'Copy this line to keep or share the conditions above (Lowest EID and thread title are not included).': '複製這一行即可保存或分享上方的條件（不含最低 EID 與討論串標題）。',
+  'Press Ctrl+C to copy': '按 Ctrl+C 複製',
+  'Copied to clipboard': '已複製到剪貼簿',
+  'Paste a line made by Export. It replaces the conditions above, then searches.': '貼上「匯出」產生的一行文字，會取代上方的條件並立即搜尋。',
+  'Imported; not found in this version and skipped: {0}': '已匯入；以下項目在這個版本不存在，已略過：{0}',
+  'This is not SmartSearch-Cloud filter text: paste the whole line made by Export': '這不是 SmartSearch-Cloud 的篩選條件文字：請貼上「匯出」產生的整行文字',
+  'Equipment filter': '裝備篩選',
+  'Category': '分類',
+  'Type': '類型',
+  'Prefix': '前綴',
+  'Suffix': '後綴',
+  'Slot': '部位',
+  'Primary attributes (must have all picked)': '主要屬性（須全部具備）',
+  'No prefix': '無前綴',
+  'No suffix': '無後綴',
+  'Several in one section = any of them; different sections must all match': '同一區塊多選＝符合任一即可；不同區塊須全部符合',
+  'Done': '完成',
+  'Set the conditions above, then press Search.': '設定上方條件後按「搜尋」。',
+  'Another transaction is in progress, please wait and press Search again': '另一項資料庫作業進行中，請稍候再按「搜尋」',
+  'Keyword is too short: use at least 3 characters, or leave it empty': '關鍵字太短：至少 3 個字元，或留空',
+  'Invalid regular expression: {0}': '正規表示式無效：{0}',
+  'Searching...': '搜尋中…',
+  'Forum {0}': '{0} 版塊',
+  '{0} threads saved in {1} database': '{1} 資料庫已儲存 {0} 個討論串',
+  'lowestEid is not an integer': '最低 EID 不是整數',
+  '{0} hidden': '已隱藏 {0}',
+  'Poster': '發文者',
+  'Thread': '討論串',
+  'Line content': '內容',
+  'Thread saved': '討論串儲存',
+  'Post edited': '貼文編輯',
+  'Quality': '品質',
+  'Ignore': '忽略',
+  '{0} results': '{0} 筆結果',
+  'Unknown': '未知',
+  '{0} days ago': '{0} 天前',
+  '{0} years ago': '{0} 年前',
+  'Unassigned': '未分配',
+  'Soulbound': '靈魂綁定',
+  'Untradeable': '不可交易',
+  'No such item': '查無此裝備',
+  'Error': '錯誤',
+  'Failed to open IndexedDB for {0}: {1}': '無法開啟 {0} 的 IndexedDB：{1}',
+  'Another transaction is in progress, please wait': '另一項資料庫作業進行中，請稍候',
+  'Database error, please retry': '資料庫錯誤，請重試',
+  'Always ignore thread by {0} titled "{1}"?': '永遠忽略 {0} 的討論串「{1}」？',
+  'Always ignore the post in this thread that includes "{0}"?': '永遠忽略這個討論串中包含「{0}」的貼文？',
+  'Completely remove this thread from the database?': '從資料庫完全移除這個討論串？',
+  'Ignored threads': '已忽略的討論串',
+  'Ignored posts': '已忽略的貼文',
+  'Remove from ignoredThreads': '從已忽略的討論串移除',
+  'Remove from ignoredPosts': '從已忽略的貼文移除',
+  'Reload interface': '重新載入介面',
+  // Settings panel
+  '⚙️ SmartSearch-Cloud Settings (v{0} — Current Board: {1})': '⚙️ SmartSearch-Cloud 設定（v{0} — 目前版塊：{1}）',
+  'Language: ': '語系：',
+  'Database Update Mode': '資料庫更新模式（按下「更新資料庫」時）',
+  "Clear old threads in the current board's DB ({0}) and replace with latest Cloud DB. Your personal Ignored threads/posts &amp; Search History are preserved.": '清空目前版塊資料庫（{0}）的舊討論串，改用最新的雲端資料庫。個人的已忽略討論串／貼文與搜尋紀錄會保留。',
+  'Incremental Merge': '增量合併',
+  "Keep older threads already in the current board's DB ({0}) and merge/overwrite updated threads from Cloud DB.": '保留目前版塊資料庫（{0}）已有的舊討論串，再合併／覆寫雲端資料庫中更新過的討論串。',
+  'Independent Forum Databases &amp; Cloud Source': '各版塊獨立資料庫與雲端來源',
+  'Each forum board maintains its own isolated IndexedDB database and is only downloaded when you click <strong>Update Database</strong> inside that board:': '每個版塊各有獨立的 IndexedDB 資料庫，只有在該版塊按下 <strong>更新資料庫</strong> 時才會下載：',
+  'GitHub Repo (owner/name): ': 'GitHub 儲存庫（owner/name）：',
+  'Search Display &amp; Thread Filtering': '搜尋顯示與討論串過濾',
+  'Exclude Pinned Threads': '排除置頂討論串',
+  'Hide forum announcement and pinned threads from search results.': '搜尋結果不顯示版塊公告與置頂討論串。',
+  'Hide Locked Threads': '隱藏已鎖定的討論串',
+  'Show Strikeouts': '顯示被 [s] 刪除線劃掉的裝備',
+  'Wild Guess Price': '寬鬆猜測未標單位的價格數字',
+  'Highlight posts older than (days): ': '標示超過幾天的舊貼文（天）：',
+  'Priority Shops': '優先店家',
+  'Their lines are listed first in the search results, in this order. Drag ☰ to reorder.': '這些店家的裝備在搜尋結果中排在最前面，依此順序。拖曳 ☰ 調整順序。',
+  'Shop Owner Name': '店主名稱',
+  'Drag to reorder': '拖曳調整順序',
+  'Add Shop': '新增店家',
+  'Excluded Poster UIDs / Names': '排除特定發文者（UID／名稱）',
+  'Display Name': '顯示名稱',
+  'Active?': '啟用',
+  'Seller Name': '賣家名稱',
+  'Remove': '移除',
+  'Add User': '新增使用者',
+  'Save &amp; Update {0} DB Now': '儲存並立即更新 {0} 資料庫',
+  'Save Settings': '儲存設定',
+  'Invalid GitHub Repo format. Expected "owner/repo" (or full GitHub repo URL).': 'GitHub 儲存庫格式錯誤，應為「owner/repo」（或完整的 GitHub 儲存庫網址）。',
+  // equipment filter groups, categories and slots
+  '1H': '單手武器',
+  '2H': '雙手武器',
+  'Staff': '法杖',
+  'Shield': '盾牌',
+  'Cloth': '布甲',
+  'Light': '輕甲',
+  'Heavy': '重甲',
+  'Head': '頭',
+  'Body': '身',
+  'Hands': '手',
+  'Legs': '腿',
+  'Feet': '腳',
+  'Weapon / staff': '武器／法杖',
+  'Armor / shield': '護甲／盾牌',
+  'Mitigation': '緩傷',
+  'Weapon': '武器',
+  'Staff / magic': '法杖／魔法',
+  'Proficiency': '熟練度',
+  'Defence': '防禦',
+  'Primary attributes': '主要屬性',
+  // equipment qualities
+  'Peerless': '無雙',
+  'Legendary': '傳奇',
+  'Magnificent': '史詩',
+  'Exquisite': '精良',
+  'Superior': '上等',
+  'Average': '普通',
+  'Fair': '尚可',
+  'Crude': '粗糙',
+  // equipment types
+  'Axe': '斧',
+  'Club': '棍棒',
+  'Dagger': '匕首',
+  'Rapier': '西洋劍',
+  'Shortsword': '短劍',
+  'Wakizashi': '脇差',
+  'Estoc': '刺劍',
+  'Katana': '太刀',
+  'Longsword': '長劍',
+  'Mace': '錘矛',
+  'Scythe': '鐮刀',
+  'Swordchucks': '鎖鏈雙劍',
+  'Oak': '橡木',
+  'Redwood': '紅杉木',
+  'Willow': '柳木',
+  'Katalox': '鐵木',
+  'Ebony': '烏木',
+  'Buckler': '小圓盾',
+  'Kite': '鳶盾',
+  'Tower': '塔盾',
+  'Force': '原力盾',
+  'Cotton': '棉製',
+  'Gossamer': '薄紗',
+  'Ironsilk': '鐵絲絨',
+  'Phase': '相位',
+  'Leather': '皮革',
+  'Drakehide': '龍鱗甲',
+  'Kevlar': '凱夫拉',
+  'Shade': '暗影',
+  'Plate': '板甲',
+  'Chain': '鎖子甲',
+  'Reactive': '反應裝甲',
+  'Power': '動力甲',
+  // prefixes
+  'Ethereal': '空靈',
+  'Fiery': '紅蓮',
+  'Arctic': '北極',
+  'Shocking': '雷鳴',
+  'Tempestuous': '風暴',
+  'Hallowed': '聖光',
+  'Demonic': '魔性',
+  'Radiant': '魔光',
+  'Charged': '速充',
+  'Mystic': '神秘',
+  'Frugal': '節能',
+  'Reinforced': '強固',
+  'Agile': '敏捷',
+  'Savage': '殘暴',
+  'Mithril': '秘銀',
+  'Shielding': '盾化',
+  'Ruby': '紅寶石',
+  'Cobalt': '鈷石',
+  'Amber': '琥珀',
+  'Jade': '翡翠',
+  'Zircon': '鋯石',
+  'Onyx': '縞瑪瑙',
+  // suffixes
+  'Slaughter': '殺戮',
+  'Balance': '平衡',
+  'Swiftness': '迅捷',
+  'the Nimble': '鬼靈',
+  'the Battlecaster': '戰法師',
+  'the Vampire': '吸血鬼',
+  'the Illithid': '靈吸怪',
+  'the Banshee': '報喪女妖',
+  'Destruction': '毀滅',
+  'Focus': '專注',
+  'Surtr': '史爾特爾',
+  'Niflheim': '尼福爾海姆',
+  'Mjolnir': '妙爾尼爾',
+  'Freyr': '弗雷',
+  'Heimdall': '海姆達爾',
+  'Fenrir': '芬里爾',
+  'the Elementalist': '元素使',
+  'the Heaven-sent': '天國賜物',
+  'the Demon-fiend': '煉獄妖魔',
+  'the Earth-walker': '地行者',
+  'the Curse-weaver': '織咒者',
+  'Protection': '防護',
+  'Warding': '結界',
+  'Dampening': '抗震',
+  'Deflection': '偏曲',
+  'Stoneskin': '硬皮',
+  'Negation': '抹煞',
+  'the Barrier': '屏障',
+  'the Fleet': '機動隊',
+  'the Shadowdancer': '影舞者',
+  'the Arcanist': '奧術師',
+  'the Fire-eater': '食火者',
+  'the Frost-born': '霜生者',
+  'the Thunder-child': '雷霆之子',
+  'the Wind-waker': '喚風者',
+  'the Thrice-blessed': '三重祝福者',
+  'the Spirit-ward': '靈魂守護者',
+  'the Ox': '公牛',
+  'the Raccoon': '浣熊',
+  'the Cheetah': '獵豹',
+  'the Fox': '狐狸',
+  'the Owl': '貓頭鷹',
+  'the Turtle': '烏龜'
+};
+
+// English text -> the chosen language's text, with {0}, {1} ... replaced by the following arguments (SMS-USR-087)
+function tl(en) {
+  var text = uiLanguage(settings) === 'zh' && Object.prototype.hasOwnProperty.call(I18N_ZH, en) ? I18N_ZH[en] : en;
+  var args = arguments;
+  return String(text).replace(/\{(\d+)\}/g, function(m, i) {
+    return Number(i) + 1 < args.length ? String(args[Number(i) + 1]) : m;
+  });
 }
 
 // SmartSearch-Cloud keeps its own storage and never reads the original HV SmartSearch's or 2.x's (SMS-USR-078)
@@ -82,6 +417,7 @@ function loadSettings() {
   if (!Array.isArray(cfg.excludedUsers)) {
     cfg.excludedUsers = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.excludedUsers));
   }
+  if (!Array.isArray(cfg.priorityShops)) cfg.priorityShops = [];
   return cfg;
 }
 
@@ -140,10 +476,10 @@ var DB_NAME = 'SmartSearchCloudDb_' + forum;
 // Register Tampermonkey menu commands (SMS-USR-031)
 try {
   if (typeof GM_registerMenuCommand === 'function') {
-    GM_registerMenuCommand('⚙️ Settings', function() {
+    GM_registerMenuCommand(tl('⚙️ Settings'), function() {
       openSettingsModal();
     });
-    GM_registerMenuCommand('🔄 Update ' + forumLabel + ' Database', function() {
+    GM_registerMenuCommand(tl('🔄 Update {0} Database', forumLabel), function() {
       updateCurrentForumDatabase();
     });
   }
@@ -258,7 +594,7 @@ var searchDiv = headTable.parentNode.insertBefore(document.createElement('div'),
 
 var useRE = searchDiv.appendChild(document.createElement('input'));
 useRE.type = 'checkbox';
-useRE.title = 'Use regular expression in search field? (unticked: words in any order, e.g. pha elem)';
+useRE.title = tl('Use regular expression in search field? (unticked: words in any order, e.g. pha elem)');
 useRE.checked = !!lastStorage.useSearchRegEx;
 
 var input = searchDiv.appendChild(document.createElement('input'));
@@ -269,12 +605,12 @@ input.autocomplete = 'off';
 
 var dataRecent = searchDiv.appendChild(document.createElement('datalist'));
 dataRecent.id = 'recent-searches';
-input.placeholder = 'e.g. pha elem (press ? for syntax)';
+input.placeholder = tl('e.g. pha elem (press ? for syntax)');
 
 // Keyword syntax help for players who never read the forum post or the README (SMS-USR-083)
 var forumHelpBtn = searchDiv.appendChild(document.createElement('button'));
 forumHelpBtn.textContent = '?';
-forumHelpBtn.title = 'Keyword syntax and examples';
+forumHelpBtn.title = tl('Keyword syntax and examples');
 forumHelpBtn.style.marginLeft = '4px';
 var forumHelpPanel = searchDiv.parentNode.insertBefore(buildSyntaxHelp(document), searchDiv.nextSibling);
 forumHelpBtn.addEventListener('click', function() {
@@ -361,6 +697,21 @@ function isThreadExcludedBySettings(thread) {
   return false;
 }
 
+// Position of the thread's poster in the Priority Shops list (SMS-USR-088), -1 = not listed.
+// A name or a UID matches, like the exclusions.
+function priorityShopRank(thread, shops) {
+  if (!thread || !Array.isArray(shops)) return -1;
+  var tUid = String(thread.opUid || '').trim();
+  var tName = String(thread.opName || '').trim().toLowerCase();
+  for (var i = 0; i < shops.length; i++) {
+    var shop = shops[i] || {};
+    var uid = String(shop.uid || '').trim();
+    var name = String(shop.displayName || '').trim().toLowerCase();
+    if ((uid && uid === tUid) || (name && name === tName)) return i;
+  }
+  return -1;
+}
+
 function getEquipFromLink(href) {
   if (!href) return false;
   var isIsekai = /\/isekai\//i.test(href);
@@ -437,7 +788,7 @@ function exportFilterText(state) {
 // has that select option or chip; anything else is skipped (a newer or older script may differ).
 // Returns { filter, skipped: [labels] }; throws an Error when the text is not an exported filter.
 function parseFilterText(text, isAllowed) {
-  var notFilter = 'This is not SmartSearch-Cloud filter text: paste the whole line made by Export';
+  var notFilter = tl('This is not SmartSearch-Cloud filter text: paste the whole line made by Export');
   var obj;
   try {
     obj = JSON.parse(String(text == null ? '' : text).trim());
@@ -472,18 +823,17 @@ function parseFilterText(text, isAllowed) {
 function buildSyntaxHelp(d) {
   // Built inside the function: the forum bar calls it before a top-level var would be assigned
   var html =
-  '<b>Keyword syntax</b> (RegEx box unticked)' +
+  tl('<b>Keyword syntax</b> (RegEx box unticked)') +
   '<ul style="margin:4px 0 4px 18px; padding:0;">' +
-  '<li>Words in any order, each matching the start of a word, upper or lower case: ' +
-  '<code>pha elem</code> finds <i>Legendary Phase Shoes of the Elementalist</i></li>' +
-  '<li>Every word must be on the line: <code>leg fiery oak</code>, <code>peer pha sh</code>, <code>mag shade arca</code></li>' +
-  '<li><code>*</code> stands for any letters inside a word: <code>*sword</code> finds Shortsword, Longsword</li>' +
-  '<li>Only the text you see is searched, not the link addresses. Numbers work too: <code>lv.500</code>, <code>500k</code></li>' +
-  '<li>Leave it empty to list every equipment line; otherwise type at least 3 characters.</li>' +
+  '<li>' + tl('Words in any order, each matching the start of a word, upper or lower case: <code>pha elem</code> finds <i>Legendary Phase Shoes of the Elementalist</i>') + '</li>' +
+  '<li>' + tl('Every word must be on the line: <code>leg fiery oak</code>, <code>peer pha sh</code>, <code>mag shade arca</code>') + '</li>' +
+  '<li>' + tl('<code>*</code> stands for any letters inside a word: <code>*sword</code> finds Shortsword, Longsword') + '</li>' +
+  '<li>' + tl('Only the text you see is searched, not the link addresses. Numbers work too: <code>lv.500</code>, <code>500k</code>') + '</li>' +
+  '<li>' + tl('Leave it empty to list every equipment line; otherwise type at least 3 characters.') + '</li>' +
   '</ul>' +
-  '<b>RegEx box ticked</b>: the keyword is a JavaScript regular expression, matched anywhere on the line: ' +
+  tl('<b>RegEx box ticked</b>: the keyword is a JavaScript regular expression, matched anywhere on the line: ') +
   '<code>peerless.*(phase|cotton)</code>, <code>\\bof the (arcanist|elementalist)\\b</code>' +
-  '<div style="margin-top:4px;">Quality, type, prefix, suffix, slot and primary attributes are easier with the <b>Equipment filter</b> in the results tab.</div>';
+  '<div style="margin-top:4px;">' + tl('Quality, type, prefix, suffix, slot and primary attributes are easier with the <b>Equipment filter</b> in the results tab.') + '</div>';
   var panel = d.createElement('div');
   panel.className = 'ssHelp';
   panel.style.cssText = 'display:none; text-align:left; margin:6px 0; padding:6px 10px; border:1px solid #9fb8bd; ' +
@@ -698,8 +1048,8 @@ function statCellTexts(item) {
   EQUIP_CATEGORIES.forEach(function(c) { if (c.key === d.cat) catLabel = c.label; });
   var avg = parseFloat(item && item.avg);
   return [
-    d.quality,
-    [catLabel || d.cat, d.type].filter(function(x) { return !!x; }).join(' · '),
+    tl(d.quality),
+    [catLabel || d.cat, d.type].filter(function(x) { return !!x; }).map(function(x) { return tl(x); }).join(' · '),
     d.pab,
     d.pct === null ? '' : d.pct.toFixed(1),
     isNaN(avg) ? '' : avg.toFixed(2)
@@ -884,17 +1234,17 @@ var SmartSearch;
 //    where it can be edited together with the other conditions.
 //  - Open Search Window: open an empty results tab; nothing is searched until its Search button is pressed.
 var search = searchDiv.appendChild(document.createElement('button'));
-search.textContent = 'Filter Search';
+search.textContent = tl('Filter Search');
 search.style['margin-left'] = '30px';
-search.title = 'Search this keyword now; more conditions can be added in the results tab';
+search.title = tl('Search this keyword now; more conditions can be added in the results tab');
 search.addEventListener('click', function() {
   openSearchTab(true);
 });
 
 var openSearchWindowBtn = searchDiv.appendChild(document.createElement('button'));
-openSearchWindowBtn.textContent = 'Open Search Window';
+openSearchWindowBtn.textContent = tl('Open Search Window');
 openSearchWindowBtn.style.marginLeft = '10px';
-openSearchWindowBtn.title = 'Open an empty search tab: set the conditions there, then press Search';
+openSearchWindowBtn.title = tl('Open an empty search tab: set the conditions there, then press Search');
 openSearchWindowBtn.addEventListener('click', function() {
   openSearchTab(false);
 });
@@ -904,7 +1254,7 @@ function openSearchTab(runNow) {
   applyRuntimeSettings();
   updateStatusSpan();
   var entryBtn = runNow ? search : openSearchWindowBtn;
-  var entryLabel = runNow ? 'Filter Search' : 'Open Search Window';
+  var entryLabel = runNow ? tl('Filter Search') : tl('Open Search Window');
   entryBtn.disabled = true;
   setTimeout(function() {
     entryBtn.textContent = entryLabel;
@@ -915,14 +1265,14 @@ function openSearchTab(runNow) {
   updateStorage();
   // An empty keyword lists every line with an equipment link (SMS-USR-061)
   if (forumQuery.length > 0 && forumQuery.length < 3) {
-    entryBtn.textContent = 'String is too short';
+    entryBtn.textContent = tl('String is too short');
     return;
   }
   // Results open in a new browser tab left at about:blank, so the address bar never shows a forum URL.
   // The page is built with DOM calls only: document.open()/write() from this page would rewrite the tab URL (SMS-USR-060).
   var w = win.open('', '_blank');
   if (w === null || w === undefined) {
-    error('The browser blocked the new tab, so SmartSearch\'s results can\'t be opened. Please allow pop-ups from https://forums.e-hentai.org/');
+    error(tl("The browser blocked the new tab, so SmartSearch's results can't be opened. Please allow pop-ups from https://forums.e-hentai.org/"));
     return;
   }
   if (w.document.head) w.document.head.innerHTML = '';
@@ -934,7 +1284,7 @@ function openSearchTab(runNow) {
   tabState.useRE = !!useRE.checked;
   var applySortHook = null;
   function updateTabTitle() {
-    w.document.title = (tabState.keyword || 'Search') + ' • SmartSearch-Cloud (' + forumLabel + ')';
+    w.document.title = (tabState.keyword || tl('Search')) + ' • SmartSearch-Cloud (' + forumLabel + ')';
   }
   updateTabTitle();
 
@@ -1030,7 +1380,7 @@ a:visited {color:#c06}
   var matchCountEls = [];
   var filterSyncers = [];
   function updateMatchCount(n) {
-    matchCountEls.forEach(function(span) { span.textContent = n + ' match'; });
+    matchCountEls.forEach(function(span) { span.textContent = tl('{0} match', n); });
   }
   function mk(tag, cls, text) {
     var node = doc.createElement(tag);
@@ -1138,9 +1488,9 @@ a:visited {color:#c06}
   var barMain = filterBar.appendChild(mk('div', 'ssBarMain'));
   var barLeft = barMain.appendChild(mk('div', 'ssBarLeft'));
   var barRow1 = barLeft.appendChild(mk('div', 'ssBarRow'));
-  addTextFilter(barRow1, 'ssKeyword', 'keyword', 'Keyword, e.g. pha elem (empty = all lines)');
+  addTextFilter(barRow1, 'ssKeyword', 'keyword', tl('Keyword, e.g. pha elem (empty = all lines)'));
   var reLabel = barRow1.appendChild(mk('label'));
-  reLabel.title = 'Use regular expression in the keyword box';
+  reLabel.title = tl('Use regular expression in the keyword box');
   var reCbox = reLabel.appendChild(mk('input'));
   reCbox.type = 'checkbox';
   reCbox.checked = tabState.useRE;
@@ -1148,40 +1498,40 @@ a:visited {color:#c06}
   filterSyncers.push(function() { reCbox.checked = tabState.useRE; });
   reLabel.appendChild(doc.createTextNode('RegEx'));
   var helpBtn = barRow1.appendChild(mk('button', 'ssBtn', '?'));
-  helpBtn.title = 'Keyword syntax and examples';
+  helpBtn.title = tl('Keyword syntax and examples');
   var helpPanel = filterBar.appendChild(buildSyntaxHelp(doc));
   helpBtn.addEventListener('click', function() {
     helpPanel.style.display = helpPanel.style.display === 'none' ? 'block' : 'none';
   });
   var filterToggle = barRow1.appendChild(mk('button', 'ssBtn ssBtnDark'));
-  var qualitySel = addSelect(barRow1, 'quality', [['', 'All qualities']].concat(EQUIP_QUALITIES.map(function(q) { return [q, q]; })), null);
-  addRangeFilter(barRow1, 'Level', 'levelMin', 'levelMax', 'min', 'max');
-  addRangeFilter(barRow1, 'Price', 'priceMin', 'priceMax', 'min', 'max');
+  var qualitySel = addSelect(barRow1, 'quality', [['', tl('All qualities')]].concat(EQUIP_QUALITIES.map(function(q) { return [q, tl(q)]; })), null);
+  addRangeFilter(barRow1, tl('Level'), 'levelMin', 'levelMax', tl('min'), tl('max'));
+  addRangeFilter(barRow1, tl('Price'), 'priceMin', 'priceMax', tl('min'), tl('max'));
   addRangeFilter(barRow1, 'ROLL %', 'rollMin', 'rollMax', '0', '100');
 
   var barRow2 = barLeft.appendChild(mk('div', 'ssBarRow'));
   var sortSel = addSelect(barRow2, 'sort', [
-    ['', 'Sort: post edited (newest)'],
-    ['price-desc', 'Price: high to low'],
-    ['price-asc', 'Price: low to high'],
-    ['level-desc', 'Level: high to low'],
-    ['level-asc', 'Level: low to high'],
-    ['roll-desc', 'ROLL %: high to low'],
-    ['roll-asc', 'ROLL %: low to high']
+    ['', tl('Sort: post edited (newest)')],
+    ['price-desc', tl('Price: high to low')],
+    ['price-asc', tl('Price: low to high')],
+    ['level-desc', tl('Level: high to low')],
+    ['level-asc', tl('Level: low to high')],
+    ['roll-desc', tl('ROLL %: high to low')],
+    ['roll-asc', tl('ROLL %: low to high')]
   ], function(mode) {
     if (applySortHook) applySortHook(mode); // re-orders the current results only, no new search
   });
-  var barClear = barRow2.appendChild(mk('button', 'ssBtn', 'Clear filters'));
+  var barClear = barRow2.appendChild(mk('button', 'ssBtn', tl('Clear filters')));
   barClear.addEventListener('click', clearEquipFilter);
-  var barSearch = barRow2.appendChild(mk('button', 'ssBtn ssBtnDark', 'Search'));
-  barSearch.title = 'Search the database with the conditions above';
+  var barSearch = barRow2.appendChild(mk('button', 'ssBtn ssBtnDark', tl('Search')));
+  barSearch.title = tl('Search the database with the conditions above');
   barSearch.addEventListener('click', runSearchFromBar);
   // Show Stats (SMS-USR-069): toggles the Quality / Type / PAB / ROLL % / Score columns, no new search
-  var statsBtn = barRow2.appendChild(mk('button', 'ssBtn', 'Show Stats'));
+  var statsBtn = barRow2.appendChild(mk('button', 'ssBtn', tl('Show Stats')));
   statsBtn.addEventListener('click', function() {
     tabState.showStats = !tabState.showStats;
     resultsDiv.className = tabState.showStats ? 'showStats' : '';
-    statsBtn.textContent = tabState.showStats ? 'Hide Stats' : 'Show Stats';
+    statsBtn.textContent = tabState.showStats ? tl('Hide Stats') : tl('Show Stats');
   });
   var barCount = barRow2.appendChild(mk('b', 'ssLbl'));
   matchCountEls.push(barCount);
@@ -1190,19 +1540,19 @@ a:visited {color:#c06}
   var barSide = barMain.appendChild(mk('div', 'ssBarSide'));
   var eidRow = barSide.appendChild(mk('div', 'ssSideRow'));
   // Filter import / export (SMS-USR-086), left of Lowest EID; the text box opens under the bar
-  var exportBtn = eidRow.appendChild(mk('button', 'ssBtn', 'Export'));
-  exportBtn.title = 'Copy these search conditions as text, to keep or share';
-  var importBtn = eidRow.appendChild(mk('button', 'ssBtn', 'Import'));
-  importBtn.title = 'Paste conditions made by Export, then search';
-  eidRow.appendChild(mk('span', '', 'Lowest EID'));
+  var exportBtn = eidRow.appendChild(mk('button', 'ssBtn', tl('Export')));
+  exportBtn.title = tl('Copy these search conditions as text, to keep or share');
+  var importBtn = eidRow.appendChild(mk('button', 'ssBtn', tl('Import')));
+  importBtn.title = tl('Paste conditions made by Export, then search');
+  eidRow.appendChild(mk('span', '', tl('Lowest EID')));
   var lowestEidInput = eidRow.appendChild(mk('input', 'ssEid'));
   lowestEidInput.type = 'text';
   lowestEidInput.value = forum === '90' ? '0' : String(lowestEid);
   var filterEidResult = eidRow.appendChild(mk('span', 'ssSideNote'));
   var titleRow = barSide.appendChild(mk('div', 'ssSideRow'));
-  titleRow.appendChild(mk('span', '', 'Thread title'));
+  titleRow.appendChild(mk('span', '', tl('Thread title')));
   var threadModeSel = titleRow.appendChild(mk('select'));
-  [['0', 'Any'], ['1', 'Includes'], ['-1', 'Excludes']].forEach(function(o) {
+  [['0', tl('Any')], ['1', tl('Includes')], ['-1', tl('Excludes')]].forEach(function(o) {
     var opt = threadModeSel.appendChild(mk('option', '', o[1]));
     opt.value = o[0];
   });
@@ -1224,8 +1574,8 @@ a:visited {color:#c06}
   shareText.rows = 3;
   shareText.spellcheck = false;
   var shareFoot = sharePanel.appendChild(mk('div', 'ssShareFoot'));
-  var shareApply = shareFoot.appendChild(mk('button', 'ssBtn ssBtnDark', 'Apply and search'));
-  var shareClose = shareFoot.appendChild(mk('button', 'ssBtn', 'Close'));
+  var shareApply = shareFoot.appendChild(mk('button', 'ssBtn ssBtnDark', tl('Apply and search')));
+  var shareClose = shareFoot.appendChild(mk('button', 'ssBtn', tl('Close')));
   var shareStatus = shareFoot.appendChild(mk('span', 'ssSideNote'));
   function setShareStatus(text, isError) {
     shareStatus.textContent = text;
@@ -1240,20 +1590,20 @@ a:visited {color:#c06}
   }
   exportBtn.addEventListener('click', function() {
     var text = exportFilterText(tabState);
-    shareNote.textContent = 'Copy this line to keep or share the conditions above (Lowest EID and thread title are not included).';
+    shareNote.textContent = tl('Copy this line to keep or share the conditions above (Lowest EID and thread title are not included).');
     shareText.value = text;
     shareApply.style.display = 'none';
     sharePanel.style.display = 'block';
     shareText.focus();
     shareText.select();
-    setShareStatus('Press Ctrl+C to copy', false);
+    setShareStatus(tl('Press Ctrl+C to copy'), false);
     var clip = w.navigator && w.navigator.clipboard;
     if (clip && clip.writeText) {
-      clip.writeText(text).then(function() { setShareStatus('Copied to clipboard', false); }, function() {});
+      clip.writeText(text).then(function() { setShareStatus(tl('Copied to clipboard'), false); }, function() {});
     }
   });
   importBtn.addEventListener('click', function() {
-    shareNote.textContent = 'Paste a line made by Export. It replaces the conditions above, then searches.';
+    shareNote.textContent = tl('Paste a line made by Export. It replaces the conditions above, then searches.');
     shareText.value = '';
     shareApply.style.display = '';
     sharePanel.style.display = 'block';
@@ -1274,7 +1624,7 @@ a:visited {color:#c06}
     refreshChipAvailability();
     updateFilterToggleLabel();
     if (result.skipped.length) {
-      setShareStatus('Imported; not found in this version and skipped: ' + result.skipped.join(', '), true);
+      setShareStatus(tl('Imported; not found in this version and skipped: {0}', result.skipped.join(', ')), true);
     } else {
       sharePanel.style.display = 'none';
     }
@@ -1294,43 +1644,43 @@ a:visited {color:#c06}
     group.appendChild(mk('span', 'ssGroupLabel', label));
     return group;
   }
-  var catSec = addSection('Category');
+  var catSec = addSection(tl('Category'));
   var catRow = catSec.appendChild(mk('div', 'ssGroup'));
-  EQUIP_CATEGORIES.forEach(function(c) { addChip(catRow, c.label, 'cats', c.key); });
-  var typeSec = addSection('Type');
+  EQUIP_CATEGORIES.forEach(function(c) { addChip(catRow, tl(c.label), 'cats', c.key); });
+  var typeSec = addSection(tl('Type'));
   EQUIP_CATEGORIES.forEach(function(c) {
-    var g = addGroup(typeSec, c.label);
-    c.types.forEach(function(t) { addChip(g, t, 'types', t); });
+    var g = addGroup(typeSec, tl(c.label));
+    c.types.forEach(function(t) { addChip(g, tl(t), 'types', t); });
   });
   // Section order follows the narrowing order Category → Type → Prefix → Suffix → Slot → Primary attributes (SMS-USR-079)
-  var prefixSec = addSection('Prefix');
+  var prefixSec = addSection(tl('Prefix'));
   EQUIP_PREFIX_GROUPS.forEach(function(pg) {
-    var g = addGroup(prefixSec, pg.label);
-    pg.items.forEach(function(p) { addChip(g, p, 'prefixes', p); });
+    var g = addGroup(prefixSec, tl(pg.label));
+    pg.items.forEach(function(p) { addChip(g, tl(p), 'prefixes', p); });
   });
-  addChip(addGroup(prefixSec, ''), 'No prefix', 'prefixes', EQUIP_NONE);
-  var suffixSec = addSection('Suffix');
+  addChip(addGroup(prefixSec, ''), tl('No prefix'), 'prefixes', EQUIP_NONE);
+  var suffixSec = addSection(tl('Suffix'));
   EQUIP_SUFFIX_GROUPS.forEach(function(sg) {
-    var g = addGroup(suffixSec, sg.label);
-    sg.items.forEach(function(sx) { addChip(g, sx, 'suffixes', sx); });
+    var g = addGroup(suffixSec, tl(sg.label));
+    sg.items.forEach(function(sx) { addChip(g, tl(sx), 'suffixes', sx); });
   });
-  addChip(addGroup(suffixSec, ''), 'No suffix', 'suffixes', EQUIP_NONE);
-  var slotSec = addSection('Slot');
+  addChip(addGroup(suffixSec, ''), tl('No suffix'), 'suffixes', EQUIP_NONE);
+  var slotSec = addSection(tl('Slot'));
   var slotRow = slotSec.appendChild(mk('div', 'ssGroup'));
-  EQUIP_SLOTS.forEach(function(sl) { addChip(slotRow, sl.label, 'slots', sl.label); });
+  EQUIP_SLOTS.forEach(function(sl) { addChip(slotRow, tl(sl.label), 'slots', sl.label); });
   // Unlike the other sections, every picked primary attribute must be present (SMS-USR-063)
-  var statsSec = addSection('Primary attributes (must have all picked)');
+  var statsSec = addSection(tl('Primary attributes (must have all picked)'));
   var statsRow = statsSec.appendChild(mk('div', 'ssGroup'));
   EQUIP_PRIMARY_STATS.forEach(function(st) { addChip(statsRow, st, 'stats', st); });
 
   var panelFoot = filterPanel.appendChild(mk('div', 'ssPanelFoot'));
   matchCountEls.push(panelFoot.appendChild(mk('b')));
-  panelFoot.appendChild(mk('span', '', 'Several in one section = any of them; different sections must all match'));
+  panelFoot.appendChild(mk('span', '', tl('Several in one section = any of them; different sections must all match')));
   panelFoot.appendChild(mk('span', 'ssSpacer'));
-  var panelClear = panelFoot.appendChild(mk('button', 'ssBtn', 'Clear filters'));
+  var panelClear = panelFoot.appendChild(mk('button', 'ssBtn', tl('Clear filters')));
   panelClear.addEventListener('click', clearEquipFilter);
-  var panelDone = panelFoot.appendChild(mk('button', 'ssBtn', 'Done'));
-  var panelSearch = panelFoot.appendChild(mk('button', 'ssBtn ssBtnDark', 'Search'));
+  var panelDone = panelFoot.appendChild(mk('button', 'ssBtn', tl('Done')));
+  var panelSearch = panelFoot.appendChild(mk('button', 'ssBtn ssBtnDark', tl('Search')));
   panelSearch.addEventListener('click', runSearchFromBar);
 
   function updateFilterToggleLabel() {
@@ -1338,7 +1688,7 @@ a:visited {color:#c06}
     ['cats', 'types', 'slots', 'prefixes', 'suffixes', 'stats'].forEach(function(m) {
       Object.keys(tabState[m]).forEach(function(k) { if (tabState[m][k]) picks++; });
     });
-    filterToggle.textContent = 'Equipment filter' + (picks ? ' (' + picks + ')' : '') + (filterPanel.style.display === 'none' ? ' ▾' : ' ▴');
+    filterToggle.textContent = tl('Equipment filter') + (picks ? ' (' + picks + ')' : '') + (filterPanel.style.display === 'none' ? ' ▾' : ' ▴');
   }
   filterToggle.addEventListener('click', function() {
     filterPanel.style.display = filterPanel.style.display === 'none' ? 'flex' : 'none';
@@ -1367,24 +1717,24 @@ a:visited {color:#c06}
   if (runNow)
     runSearch();
   else
-    showResultsMessage('Set the conditions above, then press Search.', false);
+    showResultsMessage(tl('Set the conditions above, then press Search.'), false);
 
   // Search the database with this tab's current conditions (SMS-USR-062): keyword AND equipment conditions
   function runSearch() {
   if (inProgress !== false || isUpdatingDb) {
-    showResultsMessage('Another transaction is in progress, please wait and press Search again', true);
+    showResultsMessage(tl('Another transaction is in progress, please wait and press Search again'), true);
     return;
   }
   var popupQuery = String(tabState.keyword || '').trim();
   if (popupQuery.length > 0 && popupQuery.length < 3) {
-    showResultsMessage('Keyword is too short: use at least 3 characters, or leave it empty', true);
+    showResultsMessage(tl('Keyword is too short: use at least 3 characters, or leave it empty'), true);
     return;
   }
   var matcher = null; // null = empty keyword: every line with an equipment link matches (SMS-USR-061)
   try {
     matcher = buildKeywordMatcher(popupQuery, tabState.useRE === true); // fuzzy unless RegEx (SMS-USR-082)
   } catch (regexErr) {
-    showResultsMessage('Invalid regular expression: ' + (regexErr && regexErr.message ? regexErr.message : String(regexErr)), true);
+    showResultsMessage(tl('Invalid regular expression: {0}', regexErr && regexErr.message ? regexErr.message : String(regexErr)), true);
     return;
   }
   if (ignoredDiv && ignoredDiv.parentNode) ignoredDiv.parentNode.removeChild(ignoredDiv);
@@ -1399,7 +1749,7 @@ a:visited {color:#c06}
   var f = JSON.parse(JSON.stringify(tabState)); // conditions of this search
   var filterActive = equipFilterIsActive(f);
   applySortHook = null;
-  showResultsMessage('Searching...', false);
+  showResultsMessage(tl('Searching...'), false);
   updateMatchCount('…');
 
   dbGet(function(obj) {
@@ -1410,15 +1760,15 @@ a:visited {color:#c06}
     resultsDiv.innerHTML = '';
 
     var navStrip = document.getElementById('navstrip');
-    var navText = navStrip ? navStrip.textContent : ('Forum ' + forumLabel);
-    resultsDiv.appendChild(w.document.createElement('h3')).textContent = navText + ':\n' + Object.keys(SmartSearch[forum]).length + ' threads saved in ' + forumLabel + ' database';
+    var navText = navStrip ? navStrip.textContent : tl('Forum {0}', forumLabel);
+    resultsDiv.appendChild(w.document.createElement('h3')).textContent = navText + ':\n' + tl('{0} threads saved in {1} database', Object.keys(SmartSearch[forum]).length, forumLabel);
     var resultsCountDiv = resultsDiv.appendChild(w.document.createElement('div'));
     function resetStatsToggle() {} // stats are columns now (SMS-USR-069): sorting no longer has info rows to drop
 
     function hide() {
       var activeLowest = parseInt(lowestEidInput.value, 10);
       if (isNaN(activeLowest)) {
-        filterEidResult.textContent = 'lowestEid is not an integer';
+        filterEidResult.textContent = tl('lowestEid is not an integer');
         return;
       }
       var hideEidCount = 0;
@@ -1449,13 +1799,13 @@ a:visited {color:#c06}
       if (hideEidCount === 0)
         filterEidResult.textContent = '';
       else
-        filterEidResult.textContent = hideEidCount + ' hidden';
+        filterEidResult.textContent = tl('{0} hidden', hideEidCount);
       if (hideTitleCount === 0) {
-        filterThreadResult.textContent = '0 hidden';
+        filterThreadResult.textContent = tl('{0} hidden', 0);
         filterThreadResult.style.visibility = 'hidden';
       } else {
         filterThreadResult.style.visibility = '';
-        filterThreadResult.textContent = hideTitleCount + ' hidden';
+        filterThreadResult.textContent = tl('{0} hidden', hideTitleCount);
       }
       updateMatchCount(shownCount);
     }
@@ -1463,7 +1813,9 @@ a:visited {color:#c06}
 
     var table = resultsDiv.appendChild(w.document.createElement('table'));
     table.className = 'main';
-    table.appendChild(w.document.createElement('thead')).innerHTML = '<tr><th>Poster</th><th>Thread</th><th>eid</th><th>Price</th><th>Level</th><th>Line content</th><th>Thread saved</th><th>Post edited</th><th class="st">Quality</th><th class="st">Type</th><th class="st">PAB</th><th class="st">ROLL %</th><th class="st">Base avg</th><th>Ignore</th></tr>';
+    table.appendChild(w.document.createElement('thead')).innerHTML = '<tr><th>' + tl('Poster') + '</th><th>' + tl('Thread') + '</th><th>eid</th><th>' + tl('Price') + '</th><th>' + tl('Level') +
+      '</th><th>' + tl('Line content') + '</th><th>' + tl('Thread saved') + '</th><th>' + tl('Post edited') + '</th><th class="st">' + tl('Quality') +
+      '</th><th class="st">' + tl('Type') + '</th><th class="st">PAB</th><th class="st">ROLL %</th><th class="st">Base avg</th><th>' + tl('Ignore') + '</th></tr>';
     resultsDiv.className = tabState.showStats ? 'showStats' : '';
     var tbody = table.appendChild(w.document.createElement('tbody'));
     var now = Date.now();
@@ -1509,6 +1861,7 @@ a:visited {color:#c06}
           }
           resultsCount++;
           var tr = tbody.appendChild(w.document.createElement('tr'));
+          tr.dataset.prio = String(priorityShopRank(thread, settings.priorityShops));
           tr.appendChild(w.document.createElement('td')).textContent = thread.opName;
           var titleTd = tr.appendChild(w.document.createElement('td'));
 
@@ -1547,14 +1900,14 @@ a:visited {color:#c06}
             tr.className = 'warn';
           for (var sc = 0; sc < 5; sc++) tr.appendChild(w.document.createElement('td')).className = 'st';
           var ignoreBtn = tr.appendChild(w.document.createElement('td')).appendChild(w.document.createElement('button'));
-          ignoreBtn.textContent = 'Ignore';
+          ignoreBtn.textContent = tl('Ignore');
           ignoreBtn.addEventListener('click', function() {
             makeIgnoreInterface(threadId, post, line);
           });
         });
       });
     });
-    resultsCountDiv.textContent = resultsCount + ' results';
+    resultsCountDiv.textContent = tl('{0} results', resultsCount);
     hide();
 
     function refreshLevels() {
@@ -1569,7 +1922,8 @@ a:visited {color:#c06}
         var item = SmartSearch.savedEquips && SmartSearch.savedEquips[equip.eid];
         if (!item)
           return;
-        tr.children[4].textContent = item.level || '';
+        tr.dataset.level = item.level || '';
+        tr.children[4].textContent = tl(item.level || '');
         statCellTexts(item).forEach(function(text, i) {
           if (tr.children[8 + i]) tr.children[8 + i].textContent = text;
         });
@@ -1580,15 +1934,27 @@ a:visited {color:#c06}
 
     function ago(num) {
       if (!num || isNaN(num) || num <= 0)
-        return ['Unknown', true];
+        return [tl('Unknown'), true];
       var daysAgo = Math.round((now - num) / (1000 * 3600 * 24));
       if (daysAgo < 364) {
         if (daysAgo < daysAgoLimit)
-          return [daysAgo + ' days ago', false];
+          return [tl('{0} days ago', daysAgo), false];
         else
-          return [daysAgo + ' days ago', true];
+          return [tl('{0} days ago', daysAgo), true];
       } else
-        return [Math.round(daysAgo / 36.5) / 10 + ' years ago', 1];
+        return [tl('{0} years ago', Math.round(daysAgo / 36.5) / 10), 1];
+    }
+
+    // Rows of the Priority Shops come first, in the list's order; the chosen sort applies within them (SMS-USR-088)
+    function rowPriority(tr) {
+      var rank = parseInt(tr.dataset.prio, 10);
+      return rank >= 0 ? rank : Infinity;
+    }
+    function byPriority(cmp) {
+      return function(a, b) {
+        var pa = rowPriority(a), pb = rowPriority(b);
+        return pa !== pb ? (pa < pb ? -1 : 1) : cmp(a, b);
+      };
     }
 
     // Sort by level
@@ -1601,9 +1967,9 @@ a:visited {color:#c06}
           trs.push(tr);
         table.children[1].removeChild(tr);
       }
-      trs.sort(function(a, b) {
-        return levelValue(b.children[4].textContent) - levelValue(a.children[4].textContent);
-      });
+      trs.sort(byPriority(function(a, b) {
+        return levelValue(b.dataset.level || '') - levelValue(a.dataset.level || '');
+      }));
       function levelValue(levelText) {
         if (levelText === 'Error')
           return -4;
@@ -1635,9 +2001,9 @@ a:visited {color:#c06}
           trs.push(tr);
         table.children[1].removeChild(tr);
       }
-      trs.sort(function(a, b) {
+      trs.sort(byPriority(function(a, b) {
         return priceValue(b.children[3].textContent) - priceValue(a.children[3].textContent);
-      });
+      }));
       function priceValue(priceText) {
         if (!priceText)
           return -999999;
@@ -1669,9 +2035,9 @@ a:visited {color:#c06}
           trs.push(tr);
         table.children[1].removeChild(tr);
       }
-      trs.sort(function(a, b) {
+      trs.sort(byPriority(function(a, b) {
         return parseInt(b.children[2].textContent || 0, 10) - parseInt(a.children[2].textContent || 0, 10);
-      });
+      }));
       trs.forEach(function(tr) {
         table.children[1].appendChild(tr);
       });
@@ -1687,9 +2053,9 @@ a:visited {color:#c06}
           trs.push(tr);
         table.children[1].removeChild(tr);
       }
-      trs.sort(function(a, b) {
+      trs.sort(byPriority(function(a, b) {
         return parseInt(b.dataset.edited || 0, 10) - parseInt(a.dataset.edited || 0, 10);
-      });
+      }));
       trs.forEach(function(tr) {
         table.children[1].appendChild(tr);
       });
@@ -1718,19 +2084,21 @@ a:visited {color:#c06}
           return isNaN(av) ? null : av;
         }
         if (mode.indexOf('quality') === 0) {
-          var qi = EQUIP_QUALITIES.indexOf(tr.children[8] ? tr.children[8].textContent : '');
+          var qEid = tr.children[2] ? tr.children[2].textContent : '';
+          var qd = qEid ? describeEquip(SmartSearch.savedEquips[qEid]) : null;
+          var qi = qd ? EQUIP_QUALITIES.indexOf(qd.quality) : -1;
           return qi === -1 ? null : EQUIP_QUALITIES.length - qi; // Peerless first
         }
         return parseInt(tr.dataset.edited || 0, 10) || null; // default: post edited, newest first
       }
       var asc = /-asc$/.test(mode);
-      trs.sort(function(a, b) {
+      trs.sort(byPriority(function(a, b) {
         var ka = sortKey(a), kb = sortKey(b);
         if (ka === null && kb === null) return 0;
         if (ka === null) return 1; // rows without a value always go last
         if (kb === null) return -1;
         return asc ? ka - kb : kb - ka;
-      });
+      }));
       trs.forEach(function(tr) { tbody.appendChild(tr); });
     }
 
@@ -1745,7 +2113,7 @@ a:visited {color:#c06}
     resultsDiv.innerHTML = '';
     var dbErrHeading = resultsDiv.appendChild(w.document.createElement('h3'));
     dbErrHeading.style.color = 'red';
-    dbErrHeading.textContent = 'Failed to open IndexedDB for ' + forumLabel + ': ' + (dbErr && dbErr.message ? dbErr.message : 'Database error');
+    dbErrHeading.textContent = tl('Failed to open IndexedDB for {0}: {1}', forumLabel, dbErr && dbErr.message ? dbErr.message : tl('Database error'));
   });
   } // end runSearch
 
@@ -1763,14 +2131,14 @@ a:visited {color:#c06}
 
     function runFreshDbMutation(btn, defaultLabel, mutatorFn, onDone) {
       if (inProgress !== false || isUpdatingDb) {
-        btn.textContent = 'Another transaction is in progress, please wait';
+        btn.textContent = tl('Another transaction is in progress, please wait');
         setTimeout(function() {
           btn.textContent = defaultLabel;
         }, 1500);
         return;
       }
       function onDbErr() {
-        btn.textContent = 'Database error, please retry';
+        btn.textContent = tl('Database error, please retry');
         setTimeout(function() {
           btn.textContent = defaultLabel;
         }, 2000);
@@ -1789,7 +2157,7 @@ a:visited {color:#c06}
     }
 
     var addToIgnoredThreads = ignoredDiv.appendChild(w.document.createElement('button'));
-    var ignoreThreadLabel = 'Always ignore thread by ' + thread.opName + ' titled "' + thread.title + '"?';
+    var ignoreThreadLabel = tl('Always ignore thread by {0} titled "{1}"?', thread.opName, thread.title);
     addToIgnoredThreads.textContent = ignoreThreadLabel;
     addToIgnoredThreads.addEventListener('click', function() {
       runFreshDbMutation(addToIgnoredThreads, ignoreThreadLabel, function(freshObj) {
@@ -1801,7 +2169,7 @@ a:visited {color:#c06}
 
     var addToIgnoredPosts = ignoredDiv.appendChild(w.document.createElement('button'));
     str = str.replace(/<\/?[^>]+(>|$)/g, '');
-    var ignorePostLabel = 'Always ignore the post in this thread that includes "' + str + '"?';
+    var ignorePostLabel = tl('Always ignore the post in this thread that includes "{0}"?', str);
     addToIgnoredPosts.textContent = ignorePostLabel;
     addToIgnoredPosts.addEventListener('click', function() {
       var ignoredPost = { postId: post.postId, threadId: thread.threadId, opName: thread.opName, title: thread.title, str: str };
@@ -1813,7 +2181,7 @@ a:visited {color:#c06}
     ignoredDiv.appendChild(w.document.createElement('br'));
 
     var deleteFromDb = ignoredDiv.appendChild(w.document.createElement('button'));
-    var deleteThreadLabel = 'Completely remove this thread from the database?';
+    var deleteThreadLabel = tl('Completely remove this thread from the database?');
     deleteFromDb.textContent = deleteThreadLabel;
     deleteFromDb.addEventListener('click', function() {
       runFreshDbMutation(deleteFromDb, deleteThreadLabel, function(freshObj) {
@@ -1824,7 +2192,7 @@ a:visited {color:#c06}
     ignoredDiv.appendChild(w.document.createElement('br'));
     ignoredDiv.appendChild(w.document.createElement('br'));
 
-    ignoredDiv.appendChild(w.document.createElement('span')).textContent = 'Ignored threads';
+    ignoredDiv.appendChild(w.document.createElement('span')).textContent = tl('Ignored threads');
     var ignoredThreadsTable = ignoredDiv.appendChild(w.document.createElement('table'));
     Object.keys(SmartSearch.ignored.threads).forEach(function(tId) {
       var ignoredThread = SmartSearch.ignored.threads[tId];
@@ -1835,9 +2203,9 @@ a:visited {color:#c06}
       ignoredThreadLink.href = 'https://forums.e-hentai.org/index.php?showtopic=' + encodeURIComponent(ignoredThread.threadId);
       ignoredThreadLink.textContent = ignoredThread.title;
       var removeIgnoreButton = tr.appendChild(w.document.createElement('td')).appendChild(w.document.createElement('button'));
-      removeIgnoreButton.textContent = 'Remove from ignoredThreads';
+      removeIgnoreButton.textContent = tl('Remove from ignoredThreads');
       removeIgnoreButton.addEventListener('click', function() {
-        runFreshDbMutation(removeIgnoreButton, 'Remove from ignoredThreads', function(freshObj) {
+        runFreshDbMutation(removeIgnoreButton, tl('Remove from ignoredThreads'), function(freshObj) {
           if (freshObj.ignored && freshObj.ignored.threads) delete freshObj.ignored.threads[tId];
         }, function() {
           if (tr.parentNode === ignoredThreadsTable) ignoredThreadsTable.removeChild(tr);
@@ -1847,7 +2215,7 @@ a:visited {color:#c06}
     ignoredDiv.appendChild(w.document.createElement('br'));
     ignoredDiv.appendChild(w.document.createElement('br'));
 
-    ignoredDiv.appendChild(w.document.createElement('span')).textContent = 'Ignored posts';
+    ignoredDiv.appendChild(w.document.createElement('span')).textContent = tl('Ignored posts');
     var ignoredPostsTable = ignoredDiv.appendChild(w.document.createElement('table'));
     ignoredPostsTable.className = 'ignoredPosts';
     Object.keys(SmartSearch.ignored.posts).forEach(function(postId) {
@@ -1860,9 +2228,9 @@ a:visited {color:#c06}
       ignoredPostLink.textContent = ignoredPost.title;
 
       var removeIgnoreButton = tr.appendChild(w.document.createElement('td')).appendChild(w.document.createElement('button'));
-      removeIgnoreButton.textContent = 'Remove from ignoredPosts';
+      removeIgnoreButton.textContent = tl('Remove from ignoredPosts');
       removeIgnoreButton.addEventListener('click', function() {
-        runFreshDbMutation(removeIgnoreButton, 'Remove from ignoredPosts', function(freshObj) {
+        runFreshDbMutation(removeIgnoreButton, tl('Remove from ignoredPosts'), function(freshObj) {
           if (freshObj.ignored && freshObj.ignored.posts) delete freshObj.ignored.posts[postId];
         }, function() {
           if (tr.parentNode === ignoredPostsTable) ignoredPostsTable.removeChild(tr);
@@ -1875,7 +2243,7 @@ a:visited {color:#c06}
     ignoredDiv.appendChild(w.document.createElement('br'));
 
     var close = ignoredDiv.appendChild(w.document.createElement('button'));
-    close.textContent = 'Close';
+    close.textContent = tl('Close');
     close.addEventListener('click', function() {
       w.document.body.removeChild(ignoredDiv);
       ignoredDiv = null;
@@ -1884,7 +2252,7 @@ a:visited {color:#c06}
     ignoredDiv.appendChild(w.document.createElement('br'));
 
     var reload = ignoredDiv.appendChild(w.document.createElement('button'));
-    reload.textContent = 'Reload interface';
+    reload.textContent = tl('Reload interface');
     reload.addEventListener('click', function() {
       reopenCurrentSearch();
     });
@@ -1897,26 +2265,26 @@ a:visited {color:#c06}
 // ─────────────────────────────────────────────────────────────────────────────
 
 function formatVersionLabel(v) {
-  if (!v || v.length !== 14) return v || 'Not downloaded';
+  if (!v || v.length !== 14) return v || tl('Not downloaded');
   return v.slice(0, 4) + '-' + v.slice(4, 6) + '-' + v.slice(6, 8) + ' ' + v.slice(8, 10) + ':' + v.slice(10, 12);
 }
 
 // The database is only downloaded when the user clicks this button; its label shows the version in use (SMS-USR-021, 023)
 var updateDbBtn = searchDiv.appendChild(document.createElement('button'));
 updateDbBtn.style.marginLeft = '20px';
-updateDbBtn.title = 'Click to download the latest ' + forumLabel + ' database from GitHub Releases (skipped when already up to date)';
+updateDbBtn.title = tl('Click to download the latest {0} database from GitHub Releases (skipped when already up to date)', forumLabel);
 updateDbBtn.addEventListener('click', function() {
   updateCurrentForumDatabase();
 });
 
 function refreshDbButtonLabel() {
   var curVer = (settings.forumVersions && settings.forumVersions[forum]) || '';
-  updateDbBtn.textContent = 'Update Database (' + (curVer ? 'v' + formatVersionLabel(curVer) : 'not downloaded') + ')';
+  updateDbBtn.textContent = tl('Update Database ({0})', curVer ? 'v' + formatVersionLabel(curVer) : tl('not downloaded'));
 }
 refreshDbButtonLabel();
 
 var settingsBtn = searchDiv.appendChild(document.createElement('button'));
-settingsBtn.textContent = '⚙️ Settings';
+settingsBtn.textContent = tl('⚙️ Settings');
 settingsBtn.style.marginLeft = '10px';
 settingsBtn.addEventListener('click', function() {
   openSettingsModal();
@@ -1927,8 +2295,8 @@ statusSpan.style.marginLeft = '12px';
 statusSpan.style.fontSize = '12px';
 
 function updateStatusSpan(extraMsg) {
-  var modeLabel = settings.syncMode === 'full' ? 'Full Rebuild' : 'Incremental';
-  statusSpan.textContent = forumLabel + ' DB [' + modeLabel + ']' + (extraMsg ? ' — ' + extraMsg : '');
+  var modeLabel = settings.syncMode === 'full' ? tl('Full Rebuild') : tl('Incremental');
+  statusSpan.textContent = tl('{0} DB [{1}]', forumLabel, modeLabel) + (extraMsg ? ' — ' + extraMsg : '');
 }
 updateStatusSpan();
 
@@ -1968,29 +2336,29 @@ function fetchJsonViaGM(url, gz) {
               gunzipToText(resp.response).then(function(text) {
                 resolve(JSON.parse(text));
               }).catch(function() {
-                reject(new Error('Invalid gzip JSON from ' + url));
+                reject(new Error(tl('Invalid gzip JSON from {0}', url)));
               });
               return;
             }
             try {
               resolve(JSON.parse(resp.responseText));
             } catch (e) {
-              reject(new Error('Invalid JSON from ' + url));
+              reject(new Error(tl('Invalid JSON from {0}', url)));
             }
           } else {
-            var httpErr = new Error('HTTP ' + resp.status + ' fetching ' + url);
+            var httpErr = new Error(tl('HTTP {0} fetching {1}', resp.status, url));
             httpErr.status = resp.status;
             reject(httpErr);
           }
         },
         onerror: function() {
-          reject(new Error('Network error fetching ' + url));
+          reject(new Error(tl('Network error fetching {0}', url)));
         },
         ontimeout: function() {
-          reject(new Error('Timeout fetching ' + url));
+          reject(new Error(tl('Timeout fetching {0}', url)));
         },
         onabort: function() {
-          reject(new Error('Aborted fetching ' + url));
+          reject(new Error(tl('Aborted fetching {0}', url)));
         }
       });
     } else {
@@ -2048,7 +2416,7 @@ function getManifestUrl() {
 
 async function fetchLatestManifest() {
   var manifest = await fetchJsonViaGM(getManifestUrl());
-  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) throw new Error('Invalid manifest.json');
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) throw new Error(tl('Invalid manifest.json'));
   return manifest;
 }
 
@@ -2056,18 +2424,18 @@ async function fetchLatestManifest() {
 async function resolveForumDownloadSource(forumId) {
   var gzOk = canGunzip();
   var url = getForumAssetUrl(forumId);
-  var via = (settings.customBaseUrl && String(settings.customBaseUrl).trim()) ? 'custom base URL' : 'latest release';
+  var via = (settings.customBaseUrl && String(settings.customBaseUrl).trim()) ? tl('custom base URL') : tl('latest release');
   var manifest = null;
   try {
     manifest = await fetchLatestManifest();
   } catch (manifestErr) {
     // Without the manifest the board file itself is downloaded; its own version decides (SMS-USR-071)
     console.warn('[SmartSearch] manifest.json unavailable, downloading the board directly', manifestErr);
-    return { url: url, gzUrl: gzOk ? url + '.gz' : '', version: '', via: via + ' (no manifest)' };
+    return { url: url, gzUrl: gzOk ? url + '.gz' : '', version: '', via: tl('{0} (no manifest)', via) };
   }
   var entry = manifest.forums && manifest.forums[String(forumId)];
   if (!entry || typeof entry !== 'object') {
-    throw new Error((FORUM_LABELS[forumId] || forumId) + ' is not in the latest database release ' + (manifest.version || ''));
+    throw new Error(tl('{0} is not in the latest database release {1}', FORUM_LABELS[forumId] || forumId, manifest.version || ''));
   }
   var version = String(entry.version || manifest.version || '');
   return {
@@ -2080,7 +2448,7 @@ async function resolveForumDownloadSource(forumId) {
 
 async function updateCurrentForumDatabase() {
   if (inProgress !== false || isUpdatingDb) {
-    updateStatusSpan('Busy, please wait...');
+    updateStatusSpan(tl('Busy, please wait...'));
     return;
   }
   settings = loadSettings();
@@ -2088,9 +2456,9 @@ async function updateCurrentForumDatabase() {
   updateDbBtn.disabled = true;
   updateDbBtn.style.backgroundColor = '';
   updateDbBtn.style.color = '';
-  updateDbBtn.textContent = 'Downloading ' + forumLabel + '...';
+  updateDbBtn.textContent = tl('Downloading {0}...', forumLabel);
   var assetName = 'SmartSearch_' + forum + '.json';
-  updateStatusSpan('Downloading ' + assetName + '...');
+  updateStatusSpan(tl('Downloading {0}...', assetName));
 
   try {
     // Only the current forum board, version from the latest release's manifest.json (SMS-USR-084)
@@ -2098,21 +2466,21 @@ async function updateCurrentForumDatabase() {
     var localVersion = (settings.forumVersions && settings.forumVersions[forum]) || '';
     if (source.version && source.version === localVersion) {
       refreshDbButtonLabel();
-      updateStatusSpan('Already up to date (' + source.via + ')');
+      updateStatusSpan(tl('Already up to date ({0})', source.via));
       return;
     }
-    updateStatusSpan('Downloading ' + assetName + ' from ' + source.via + '...');
+    updateStatusSpan(tl('Downloading {0} from {1}...', assetName, source.via));
     var json = await fetchForumBoard(source);
     if (!json || !json.value || typeof json.value !== 'object' || Array.isArray(json.value)) {
-      throw new Error('Invalid payload in ' + assetName);
+      throw new Error(tl('Invalid payload in {0}', assetName));
     }
     if (String(json.key) !== String(forum)) {
-      throw new Error('Rejected ' + assetName + ': file is for forum ' + (FORUM_LABELS[json.key] || json.key) + ', not ' + forumLabel);
+      throw new Error(tl('Rejected {0}: file is for forum {1}, not {2}', assetName, FORUM_LABELS[json.key] || json.key, forumLabel));
     }
     // Fallback / mirror sources carry no version up front: the file's own version decides (no rewrite when equal)
     if (json.version && String(json.version) === localVersion) {
       refreshDbButtonLabel();
-      updateStatusSpan('Already up to date (' + source.via + ')');
+      updateStatusSpan(tl('Already up to date ({0})', source.via));
       return;
     }
     var remoteThreadCount = Object.keys(json.value).length;
@@ -2126,7 +2494,7 @@ async function updateCurrentForumDatabase() {
 
         var localThreadCount = (obj[forum] && typeof obj[forum] === 'object' && !Array.isArray(obj[forum])) ? Object.keys(obj[forum]).length : 0;
         if (settings.syncMode === 'full' && remoteThreadCount === 0 && localThreadCount > 0) {
-          reject(new Error('Refusing empty cloud snapshot in Full Rebuild mode (' + assetName + ' has 0 threads; keeping ' + localThreadCount + ' local threads)'));
+          reject(new Error(tl('Refusing empty cloud snapshot in Full Rebuild mode ({0} has 0 threads; keeping {1} local threads)', assetName, localThreadCount)));
           return;
         }
 
@@ -2154,13 +2522,13 @@ async function updateCurrentForumDatabase() {
 
     refreshDbButtonLabel();
     updateDbBtn.style.cssText = 'margin-left:20px; background-color:#33cccc; color:black;';
-    updateStatusSpan('Update complete ✓ (' + Object.keys(json.value).length + ' threads, ' + source.via + ')');
+    updateStatusSpan(tl('Update complete ✓ ({0} threads, {1})', Object.keys(json.value).length, source.via));
   } catch (err) {
     console.error('[SmartSearch Update Error]', err);
     refreshDbButtonLabel();
     updateDbBtn.style.backgroundColor = '';
     updateDbBtn.style.color = '';
-    updateStatusSpan(err && err.message ? err.message : 'Update failed');
+    updateStatusSpan(err && err.message ? err.message : tl('Update failed'));
   } finally {
     isUpdatingDb = false;
     updateDbBtn.disabled = false;
@@ -2178,19 +2546,19 @@ function formatTimestampVersion(d) {
 
 // Manage Database (Backup / Restore / Delete for the current forum board's independent DB) (SMS-USR-020)
 var manage = searchDiv.appendChild(document.createElement('button'));
-manage.textContent = 'Manage Database';
+manage.textContent = tl('Manage Database');
 manage.style.marginLeft = '20px';
 manage.addEventListener('click', function() {
   manage.disabled = true;
 
   var backup = searchDiv.appendChild(document.createElement('button'));
-  backup.textContent = 'Backup';
+  backup.textContent = tl('Backup');
   backup.style.marginLeft = '10px';
   var link = searchDiv.appendChild(document.createElement('a'));
   link.style.display = 'none';
   backup.addEventListener('click', function() {
     if (inProgress !== false || isUpdatingDb) {
-      alert('Another transaction is in progress, please wait.');
+      alert(tl('Another transaction is in progress, please wait.'));
       return;
     }
     var date = new Date();
@@ -2206,12 +2574,12 @@ manage.addEventListener('click', function() {
       link.href = window.URL.createObjectURL(new Blob([JSON.stringify(backupPayload)], { type: 'application/json' }));
       link.click();
     }, function(err) {
-      alert('Backup failed: ' + (err && err.message ? err.message : 'Database error'));
+      alert(tl('Backup failed: {0}', err && err.message ? err.message : tl('Database error')));
     });
   });
 
   var restore = searchDiv.appendChild(document.createElement('button'));
-  restore.textContent = 'Restore';
+  restore.textContent = tl('Restore');
   restore.style.marginLeft = '10px';
   var restoreFile = document.createElement('input');
   restoreFile.type = 'file';
@@ -2219,12 +2587,12 @@ manage.addEventListener('click', function() {
   searchDiv.appendChild(restoreFile);
   restore.addEventListener('click', function() {
     if (inProgress !== false || isUpdatingDb) {
-      alert('Another transaction is in progress, please wait.');
+      alert(tl('Another transaction is in progress, please wait.'));
       return;
     }
     var file = restoreFile.files[0];
     if (!file) {
-      alert('Select a file first');
+      alert(tl('Select a file first'));
       return;
     }
     var reader = new FileReader();
@@ -2233,23 +2601,23 @@ manage.addEventListener('click', function() {
       try {
         json = JSON.parse(e.target.result);
         if (!json || !json.key || !json.value || typeof json.value !== 'object' || Array.isArray(json.value)) {
-          alert('Invalid JSON');
+          alert(tl('Invalid JSON'));
           return;
         }
       } catch (err) {
-        alert('Failed to parse the file\n\nSelect a valid SmartSearch_*.json file');
+        alert(tl('Failed to parse the file\n\nSelect a valid SmartSearch_*.json file'));
         return;
       }
       if (String(json.key) !== String(forum)) {
-        alert('This file is for forum ' + (FORUM_LABELS[json.key] || json.key) + ', but you are currently in ' + forumLabel + '.\nPlease navigate to the matching forum board to restore it.');
+        alert(tl('This file is for forum {0}, but you are currently in {1}.\nPlease navigate to the matching forum board to restore it.', FORUM_LABELS[json.key] || json.key, forumLabel));
         return;
       }
       if (inProgress !== false || isUpdatingDb) {
-        alert('Another transaction is in progress, please wait.');
+        alert(tl('Another transaction is in progress, please wait.'));
         return;
       }
       dbGet(function(obj) {
-        var replaceMode = !obj[json.key] || !confirm('[OK] Just merge the file with the ' + forumLabel + ' database\n[Cancel] Clear the ' + forumLabel + ' database and replace with the file');
+        var replaceMode = !obj[json.key] || !confirm(tl('[OK] Just merge the file with the {0} database\n[Cancel] Clear the {0} database and replace with the file', forumLabel));
         if (replaceMode) {
           obj[json.key] = {};
           obj.savedEquips = {};
@@ -2268,30 +2636,30 @@ manage.addEventListener('click', function() {
             settings = latestSettings;
           }
           refreshDbButtonLabel();
-          updateStatusSpan('Restored ' + Object.keys(json.value).length + ' threads');
-          alert('Restored ' + forumLabel + ' SmartSearch Database successfully');
+          updateStatusSpan(tl('Restored {0} threads', Object.keys(json.value).length));
+          alert(tl('Restored {0} SmartSearch Database successfully', forumLabel));
         }, function(err) {
-          alert('Failed to save restored database: ' + (err && err.message ? err.message : 'Database error'));
+          alert(tl('Failed to save restored database: {0}', err && err.message ? err.message : tl('Database error')));
         });
       }, function(err) {
-        alert('Failed to open database for restore: ' + (err && err.message ? err.message : 'Database error'));
+        alert(tl('Failed to open database for restore: {0}', err && err.message ? err.message : tl('Database error')));
       });
     };
     reader.onerror = function() {
-      alert('Failed to read the file');
+      alert(tl('Failed to read the file'));
     };
     reader.readAsText(file);
   });
 
   var del = searchDiv.appendChild(document.createElement('button'));
-  del.textContent = 'Delete';
+  del.textContent = tl('Delete');
   del.style.marginLeft = '10px';
   del.addEventListener('click', function() {
     if (inProgress !== false || isUpdatingDb) {
-      alert('Another transaction is in progress, please wait.');
+      alert(tl('Another transaction is in progress, please wait.'));
       return;
     }
-    if (!confirm('This will delete the ' + forumLabel + ' (' + DB_NAME + ') Database in the browser.\nOther forum boards will NOT be affected.\nAre you sure?')) {
+    if (!confirm(tl('This will delete the {0} ({1}) Database in the browser.\nOther forum boards will NOT be affected.\nAre you sure?', forumLabel, DB_NAME))) {
       return;
     }
     dbDelete(function() {
@@ -2301,8 +2669,8 @@ manage.addEventListener('click', function() {
       saveSettings(latestSettings);
       settings = latestSettings;
       refreshDbButtonLabel();
-      updateStatusSpan('Database deleted');
-      alert('Deleted ' + forumLabel + ' database.\nRefresh the page.');
+      updateStatusSpan(tl('Database deleted'));
+      alert(tl('Deleted {0} database.\nRefresh the page.', forumLabel));
     });
   });
 });
@@ -2338,89 +2706,108 @@ function openSettingsModal() {
 
   panel.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #555;padding-bottom:10px;margin-bottom:16px;">
-      <strong style="font-size:16px;color:#fff;">⚙️ SmartSearch-Cloud Settings (v${version} — Current Board: ${forumLabel})</strong>
+      <strong style="font-size:16px;color:#fff;">${tl('⚙️ SmartSearch-Cloud Settings (v{0} — Current Board: {1})', version, forumLabel)}</strong>
       <button id="ss-set-close-top" style="background:none;border:none;color:#aaa;font-size:20px;cursor:pointer;">×</button>
     </div>
 
     <div style="margin-bottom:16px;">
-      <span style="font-weight:bold;color:#fff;">Language${zhNote(lang, '語系')}: </span>
+      <span style="font-weight:bold;color:#fff;">${tl('Language: ')}</span>
       <select id="ss-language" style="background:#333;color:#fff;border:1px solid #777;padding:2px 4px;">${languageOptions}</select>
     </div>
 
     <div style="margin-bottom:16px;">
-      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">Database Update Mode${zhNote(lang, '按下 Update Database 時的更新模式')}</div>
+      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">${tl('Database Update Mode')}</div>
       <label style="display:block;margin-bottom:4px;cursor:pointer;">
         <input type="radio" name="ss-sync-mode" value="full" ${settings.syncMode === 'full' ? 'checked' : ''} />
-        <strong>Full Rebuild${zhNote(lang, '完全重建')}</strong>
-        <div style="color:#aaa;font-size:12px;margin-left:22px;">Clear old threads in the current board's DB (${DB_NAME}) and replace with latest Cloud DB. Your personal Ignored threads/posts &amp; Search History are preserved.</div>
+        <strong>${tl('Full Rebuild')}</strong>
+        <div style="color:#aaa;font-size:12px;margin-left:22px;">${tl("Clear old threads in the current board's DB ({0}) and replace with latest Cloud DB. Your personal Ignored threads/posts &amp; Search History are preserved.", DB_NAME)}</div>
       </label>
       <label style="display:block;cursor:pointer;">
         <input type="radio" name="ss-sync-mode" value="incremental" ${settings.syncMode === 'incremental' ? 'checked' : ''} />
-        <strong>Incremental Merge${zhNote(lang, '增量合併')}</strong>
-        <div style="color:#aaa;font-size:12px;margin-left:22px;">Keep older threads already in the current board's DB (${DB_NAME}) and merge/overwrite updated threads from Cloud DB.</div>
+        <strong>${tl('Incremental Merge')}</strong>
+        <div style="color:#aaa;font-size:12px;margin-left:22px;">${tl("Keep older threads already in the current board's DB ({0}) and merge/overwrite updated threads from Cloud DB.", DB_NAME)}</div>
       </label>
     </div>
 
     <div style="margin-bottom:16px;">
-      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">Independent Forum Databases &amp; Cloud Source${zhNote(lang, '各版塊獨立資料庫狀態')}</div>
+      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">${tl('Independent Forum Databases &amp; Cloud Source')}</div>
       <div style="color:#bbb;font-size:12px;margin-bottom:8px;">
-        Each forum board maintains its own isolated IndexedDB database and is only downloaded when you click <strong>Update Database</strong> inside that board:<br/>
+        ${tl('Each forum board maintains its own isolated IndexedDB database and is only downloaded when you click <strong>Update Database</strong> inside that board:')}<br/>
         • <strong>WTS (77)</strong> [SmartSearchCloudDb_77]: ${wtsVer}<br/>
         • <strong>ISK (90)</strong> [SmartSearchCloudDb_90]: ${iskVer}
       </div>
       <div style="margin-top:6px;">
-        <span>GitHub Repo (owner/name): </span>
+        <span>${tl('GitHub Repo (owner/name): ')}</span>
         <input type="text" id="ss-github-repo" value="${escapeHtml(settings.githubRepo || '')}" placeholder="owner/repo" style="width:260px;background:#333;color:#fff;border:1px solid #777;padding:3px 6px;" />
       </div>
     </div>
 
     <div style="margin-bottom:16px;">
-      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">Search Display &amp; Thread Filtering${zhNote(lang, '搜尋顯示與置頂過濾')}</div>
+      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">${tl('Search Display &amp; Thread Filtering')}</div>
       <label style="display:block;margin-bottom:6px;cursor:pointer;">
         <input type="checkbox" id="ss-exclude-pinned" ${settings.excludePinned ? 'checked' : ''} />
-        <strong>Exclude Pinned Threads${zhNote(lang, '排除置頂討論串')}</strong>
-        <div style="color:#aaa;font-size:12px;margin-left:22px;">Hide forum announcement and pinned threads from search results.</div>
+        <strong>${tl('Exclude Pinned Threads')}</strong>
+        <div style="color:#aaa;font-size:12px;margin-left:22px;">${tl('Hide forum announcement and pinned threads from search results.')}</div>
       </label>
       <label style="display:block;margin-bottom:6px;cursor:pointer;">
         <input type="checkbox" id="ss-hide-locked" ${settings.hideLocked ? 'checked' : ''} />
-        <strong>Hide Locked Threads${zhNote(lang, '隱藏已鎖定討論串')}</strong>
+        <strong>${tl('Hide Locked Threads')}</strong>
       </label>
       <label style="display:block;margin-bottom:6px;cursor:pointer;">
         <input type="checkbox" id="ss-show-strikeouts" ${settings.showStrikeouts ? 'checked' : ''} />
-        <strong>Show Strikeouts${zhNote(lang, '顯示已被 [s] 刪除線劃掉的裝備')}</strong>
+        <strong>${tl('Show Strikeouts')}</strong>
       </label>
       <label style="display:block;margin-bottom:6px;cursor:pointer;">
         <input type="checkbox" id="ss-wild-guess" ${settings.wildGuess ? 'checked' : ''} />
-        <strong>Wild Guess Price${zhNote(lang, '寬鬆猜測未標明單位的價格數字')}</strong>
+        <strong>${tl('Wild Guess Price')}</strong>
       </label>
       <div style="margin-top:6px;">
-        <span>Highlight posts older than (days): </span>
+        <span>${tl('Highlight posts older than (days): ')}</span>
         <input type="number" id="ss-days-limit" value="${daysLimitVal}" min="1" max="3650" style="width:60px;background:#333;color:#fff;border:1px solid #777;padding:2px 4px;" />
       </div>
     </div>
 
     <div style="border:1px solid #bbb;background:#2b2e32;padding:12px;margin-bottom:16px;">
-      <div style="font-weight:bold;color:#fff;margin-bottom:8px;text-align:center;">Excluded Poster UIDs / Names${zhNote(lang, '排除特定發文者')}</div>
+      <div style="font-weight:bold;color:#fff;margin-bottom:4px;text-align:center;">${tl('Priority Shops')}</div>
+      <div style="color:#aaa;font-size:12px;text-align:center;">${tl('Their lines are listed first in the search results, in this order. Drag ☰ to reorder.')}</div>
+      <table style="width:100%;border-collapse:collapse;margin-top:4px;">
+        <thead>
+          <tr style="border:none;color:#ddd;font-size:12px;">
+            <th style="padding:4px;width:30px;"></th>
+            <th style="text-align:center;padding:4px;">${tl('Shop Owner Name')}</th>
+            <th style="text-align:center;padding:4px;">UID</th>
+            <th style="text-align:center;padding:4px;width:40px;"></th>
+          </tr>
+        </thead>
+        <tbody id="ss-priority-tbody"></tbody>
+      </table>
+      <div style="text-align:center;margin-top:10px;">
+        <button id="ss-add-priority" style="background:#3a3d42;color:#fff;border:1px solid #999;border-radius:4px;padding:4px 16px;cursor:pointer;">${tl('Add Shop')}</button>
+      </div>
+    </div>
+
+    <div style="border:1px solid #bbb;background:#2b2e32;padding:12px;margin-bottom:16px;">
+      <div style="font-weight:bold;color:#fff;margin-bottom:8px;text-align:center;">${tl('Excluded Poster UIDs / Names')}</div>
       <table style="width:100%;border-collapse:collapse;margin-top:4px;" id="ss-excluded-table">
         <thead>
           <tr style="border:none;color:#ddd;font-size:12px;">
-            <th style="text-align:center;padding:4px;">Display Name</th>
+            <th style="text-align:center;padding:4px;">${tl('Display Name')}</th>
             <th style="text-align:center;padding:4px;">UID</th>
-            <th style="text-align:center;padding:4px;width:70px;">Active?</th>
+            <th style="text-align:center;padding:4px;width:70px;">${tl('Active?')}</th>
             <th style="text-align:center;padding:4px;width:40px;"></th>
           </tr>
         </thead>
         <tbody id="ss-excluded-tbody"></tbody>
       </table>
       <div style="text-align:center;margin-top:10px;">
-        <button id="ss-add-excluded" style="background:#3a3d42;color:#fff;border:1px solid #999;border-radius:4px;padding:4px 16px;cursor:pointer;">Add User</button>
+        <button id="ss-add-excluded" style="background:#3a3d42;color:#fff;border:1px solid #999;border-radius:4px;padding:4px 16px;cursor:pointer;">${tl('Add User')}</button>
       </div>
     </div>
 
     <div style="display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #555;padding-top:12px;">
-      <button id="ss-set-sync-now" style="background:#2d6a7a;color:#fff;border:1px solid #5bc0de;padding:6px 14px;cursor:pointer;">Save &amp; Update ${forumLabel} DB Now</button>
-      <button id="ss-set-save" style="background:#3a5a40;color:#fff;border:1px solid #70a288;padding:6px 16px;cursor:pointer;">Save Settings</button>
-      <button id="ss-set-cancel" style="background:#444;color:#ddd;border:1px solid #777;padding:6px 14px;cursor:pointer;">Close</button>
+      <button id="ss-set-sync-now" style="background:#2d6a7a;color:#fff;border:1px solid #5bc0de;padding:6px 14px;cursor:pointer;">${tl('Save &amp; Update {0} DB Now', forumLabel)}</button>
+      <button id="ss-set-save" style="background:#3a5a40;color:#fff;border:1px solid #70a288;padding:6px 16px;cursor:pointer;">${tl('Save Settings')}</button>
+      <button id="ss-set-cancel" style="background:#444;color:#ddd;border:1px solid #777;padding:6px 14px;cursor:pointer;">${tl('Close')}</button>
     </div>
   `;
 
@@ -2431,7 +2818,7 @@ function openSettingsModal() {
     tr.style.border = 'none';
     tr.innerHTML = `
       <td style="padding:4px;text-align:center;">
-        <input type="text" class="ss-ex-name" value="${escapeHtml(userObj.displayName || '')}" placeholder="Seller Name" style="width:90%;background:#fff;color:#000;border:1px solid #888;padding:3px 6px;" />
+        <input type="text" class="ss-ex-name" value="${escapeHtml(userObj.displayName || '')}" placeholder="${escapeHtml(tl('Seller Name'))}" style="width:90%;background:#fff;color:#000;border:1px solid #888;padding:3px 6px;" />
       </td>
       <td style="padding:4px;text-align:center;">
         <input type="text" class="ss-ex-uid" value="${escapeHtml(userObj.uid || '')}" placeholder="UID" style="width:85%;background:#999;color:#222;border:1px solid #888;padding:3px 6px;" />
@@ -2440,7 +2827,7 @@ function openSettingsModal() {
         <input type="checkbox" class="ss-ex-active" ${userObj.active !== false ? 'checked' : ''} style="cursor:pointer;" />
       </td>
       <td style="padding:4px;text-align:center;">
-        <button type="button" class="ss-ex-remove" style="background:none;border:none;color:#aaa;font-size:18px;cursor:pointer;" title="Remove">×</button>
+        <button type="button" class="ss-ex-remove" style="background:none;border:none;color:#aaa;font-size:18px;cursor:pointer;" title="${escapeHtml(tl('Remove'))}">×</button>
       </td>
     `;
     tr.querySelector('.ss-ex-remove').addEventListener('click', function() {
@@ -2455,11 +2842,64 @@ function openSettingsModal() {
     addExcludedRow({ displayName: '', uid: '', active: true });
   });
 
+  // Priority Shops (SMS-USR-088): rows are reordered by dragging the ☰ handle; the list is saved in this order
+  var priorityBody = panel.querySelector('#ss-priority-tbody');
+  var draggingRow = null;
+  function addPriorityRow(shop) {
+    var tr = document.createElement('tr');
+    tr.style.border = 'none';
+    tr.innerHTML = `
+      <td style="padding:4px;text-align:center;">
+        <span class="ss-pr-handle" draggable="true" title="${escapeHtml(tl('Drag to reorder'))}" style="cursor:grab;font-size:16px;color:#ccc;user-select:none;">☰</span>
+      </td>
+      <td style="padding:4px;text-align:center;">
+        <input type="text" class="ss-pr-name" value="${escapeHtml(shop.displayName || '')}" placeholder="${escapeHtml(tl('Shop Owner Name'))}" style="width:90%;background:#fff;color:#000;border:1px solid #888;padding:3px 6px;" />
+      </td>
+      <td style="padding:4px;text-align:center;">
+        <input type="text" class="ss-pr-uid" value="${escapeHtml(shop.uid || '')}" placeholder="UID" style="width:85%;background:#999;color:#222;border:1px solid #888;padding:3px 6px;" />
+      </td>
+      <td style="padding:4px;text-align:center;">
+        <button type="button" class="ss-pr-remove" style="background:none;border:none;color:#aaa;font-size:18px;cursor:pointer;" title="${escapeHtml(tl('Remove'))}">×</button>
+      </td>
+    `;
+    var handle = tr.querySelector('.ss-pr-handle');
+    handle.addEventListener('dragstart', function(e) {
+      draggingRow = tr;
+      tr.style.opacity = '0.4';
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', ''); // Firefox starts a drag only with data
+      if (e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(tr, 10, 10);
+    });
+    handle.addEventListener('dragend', function() {
+      tr.style.opacity = '';
+      draggingRow = null;
+    });
+    tr.addEventListener('dragover', function(e) {
+      if (!draggingRow || draggingRow === tr) return;
+      e.preventDefault();
+      var box = tr.getBoundingClientRect();
+      priorityBody.insertBefore(draggingRow, e.clientY < box.top + box.height / 2 ? tr : tr.nextSibling);
+    });
+    tr.addEventListener('drop', function(e) {
+      e.preventDefault();
+    });
+    tr.querySelector('.ss-pr-remove').addEventListener('click', function() {
+      priorityBody.removeChild(tr);
+    });
+    priorityBody.appendChild(tr);
+  }
+
+  settings.priorityShops.forEach(addPriorityRow);
+
+  panel.querySelector('#ss-add-priority').addEventListener('click', function() {
+    addPriorityRow({ displayName: '', uid: '' });
+  });
+
   function collectAndSave() {
     var rawRepo = panel.querySelector('#ss-github-repo').value.trim();
     var repoVal = rawRepo ? normalizeGithubRepo(rawRepo) : DEFAULT_SETTINGS.githubRepo;
     if (!repoVal) {
-      alert('Invalid GitHub Repo format. Expected "owner/repo" (or full GitHub repo URL).');
+      alert(tl('Invalid GitHub Repo format. Expected "owner/repo" (or full GitHub repo URL).'));
       return false;
     }
     var modeRadio = panel.querySelector('input[name="ss-sync-mode"]:checked');
@@ -2482,6 +2922,13 @@ function openSettingsModal() {
       }
     });
     settings.excludedUsers = exList;
+    var shops = [];
+    [].forEach.call(priorityBody.querySelectorAll('tr'), function(tr) {
+      var shopName = tr.querySelector('.ss-pr-name').value.trim();
+      var shopUid = tr.querySelector('.ss-pr-uid').value.trim();
+      if (shopName || shopUid) shops.push({ displayName: shopName, uid: shopUid });
+    });
+    settings.priorityShops = shops;
     var latestSaved = loadSettings();
     settings.forumVersions = Object.assign({}, DEFAULT_SETTINGS.forumVersions, latestSaved.forumVersions || {});
     saveSettings(settings);
@@ -2497,9 +2944,10 @@ function openSettingsModal() {
     }
   }
 
+  // Switching the language saves the panel and reloads the forum page, so every label uses it (SMS-USR-087)
   panel.querySelector('#ss-language').addEventListener('change', function() {
     if (!collectAndSave()) return;
-    openSettingsModal();
+    window.location.reload();
   });
   panel.querySelector('#ss-set-close-top').addEventListener('click', closeModal);
   panel.querySelector('#ss-set-cancel').addEventListener('click', closeModal);
@@ -2542,7 +2990,7 @@ function dbDelete(callback, onError) {
     if (settled) return;
     settled = true;
     inProgress = false;
-    var err = new Error('Error deleting db ' + (event && event.target && event.target.errorCode));
+    var err = new Error(tl('Error deleting db {0}', event && event.target && event.target.errorCode));
     error(err.message);
     if (typeof onError === 'function') onError(err);
   };
@@ -2550,7 +2998,7 @@ function dbDelete(callback, onError) {
     if (settled) return;
     settled = true;
     inProgress = false;
-    var err = new Error('Blocked deleting db ' + DB_NAME);
+    var err = new Error(tl('Blocked deleting db {0}', DB_NAME));
     error(err.message);
     if (typeof onError === 'function') onError(err);
   };
@@ -2577,7 +3025,7 @@ function dbSet(obj, callback, onError) {
   try {
     serialized = JSON.stringify(obj);
   } catch (e) {
-    fail('dbSet: JSON stringify failed ' + (e && e.message ? e.message : String(e)));
+    fail(tl('{0}: JSON stringify failed {1}', 'dbSet', e && e.message ? e.message : String(e)));
     return;
   }
   var dbRequest = window.indexedDB.open(DB_NAME, 2);
@@ -2588,7 +3036,7 @@ function dbSet(obj, callback, onError) {
     }
   };
   dbRequest.onblocked = function() {
-    fail('dbSet: Database blocked');
+    fail(tl('{0}: Database blocked', 'dbSet'));
   };
   dbRequest.onsuccess = function() {
     var db = dbRequest.result;
@@ -2607,19 +3055,19 @@ function dbSet(obj, callback, onError) {
     };
     putReq.onerror = function(event) {
       try { db.close(); } catch (e) {}
-      fail('dbSet: Error on putReq ' + (event && event.target && event.target.errorCode));
+      fail(tl('{0}: Error on putReq {1}', 'dbSet', event && event.target && event.target.errorCode));
     };
     transaction.onerror = function(event) {
       try { db.close(); } catch (e) {}
-      fail('dbSet: Error on transaction ' + (event && event.target && event.target.errorCode));
+      fail(tl('{0}: Error on transaction {1}', 'dbSet', event && event.target && event.target.errorCode));
     };
     transaction.onabort = function(event) {
       try { db.close(); } catch (e) {}
-      fail('dbSet: Transaction aborted ' + (event && event.target && event.target.errorCode));
+      fail(tl('{0}: Transaction aborted {1}', 'dbSet', event && event.target && event.target.errorCode));
     };
   };
   dbRequest.onerror = function(event) {
-    fail('dbSet: Error opening db ' + (event && event.target && event.target.errorCode));
+    fail(tl('{0}: Error opening db {1}', 'dbSet', event && event.target && event.target.errorCode));
   };
 }
 
@@ -2641,7 +3089,7 @@ function dbGet(callback, onError) {
     }
   };
   dbRequest.onblocked = function() {
-    fail('dbGet: Database blocked');
+    fail(tl('{0}: Database blocked', 'dbGet'));
   };
   dbRequest.onsuccess = function() {
     var db = dbRequest.result;
@@ -2664,7 +3112,7 @@ function dbGet(callback, onError) {
       try {
         obj = JSON.parse(getRequest.result.obj);
       } catch (e) {
-        fail('dbGet: Failed to parse stored JSON');
+        fail(tl('{0}: Failed to parse stored JSON', 'dbGet'));
         return;
       }
       if (/showforum/.test(Object.keys(obj)[0])) {
@@ -2678,19 +3126,19 @@ function dbGet(callback, onError) {
     };
     getRequest.onerror = function(event) {
       try { db.close(); } catch (e) {}
-      fail('dbGet: Error on getRequest ' + (event && event.target && event.target.errorCode));
+      fail(tl('{0}: Error on getRequest {1}', 'dbGet', event && event.target && event.target.errorCode));
     };
     transaction.onerror = function(event) {
       try { db.close(); } catch (e) {}
-      fail('dbGet: Error on transaction ' + (event && event.target && event.target.errorCode));
+      fail(tl('{0}: Error on transaction {1}', 'dbGet', event && event.target && event.target.errorCode));
     };
     transaction.onabort = function(event) {
       try { db.close(); } catch (e) {}
-      fail('dbGet: Transaction aborted ' + (event && event.target && event.target.errorCode));
+      fail(tl('{0}: Transaction aborted {1}', 'dbGet', event && event.target && event.target.errorCode));
     };
   };
   dbRequest.onerror = function(event) {
-    fail('dbGet: Error opening db ' + (event && event.target && event.target.errorCode));
+    fail(tl('{0}: Error opening db {1}', 'dbGet', event && event.target && event.target.errorCode));
   };
 }
 
