@@ -4,7 +4,7 @@
 // @namespace   SmartSearch-Cloud
 // @author      Superlatanium, nekolor, ericeric91, claude
 // @include     https://forums.e-hentai.org/index.php*showforum=*
-// @version     3.5.0
+// @version     3.5.1
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
@@ -19,7 +19,7 @@
 // ==/UserScript==
 
 // Shown in the Settings panel title: read from the header's @version so the two never drift apart (SMS-USR-085)
-var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.5.0';
+var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.5.1';
 
 // Board 78 (WTB) is not supported for now: its posts only describe wanted equipment in free text (SMS-USR-080)
 const FORUM_LABELS = {
@@ -963,36 +963,6 @@ function emptyEquipFilter() {
   };
 }
 
-// Equipment types still possible under the picked Category / Type chips; null = nothing picked (SMS-USR-066)
-function availableEquipTypes(f) {
-  var pickedCats = anyPicked(f.cats);
-  var pickedTypes = anyPicked(f.types);
-  if (!pickedCats && !pickedTypes) return null;
-  var out = [];
-  EQUIP_CATEGORIES.forEach(function(c) {
-    if (pickedCats && !f.cats[c.key]) return;
-    c.types.forEach(function(t) {
-      if (pickedTypes && !f.types[t]) return;
-      out.push(t);
-    });
-  });
-  return out;
-}
-
-// A Category chip stays available only if one of its Types is picked; no Type picked = all categories
-function isCategoryAvailable(f, catKey) {
-  if (!anyPicked(f.types)) return true;
-  return EQUIP_CATEGORIES.some(function(c) {
-    return c.key === catKey && c.types.some(function(t) { return !!f.types[t]; });
-  });
-}
-
-// A Type chip stays available only inside the picked categories; no category picked = all types
-function isTypeAvailable(f, type) {
-  if (!anyPicked(f.cats)) return true;
-  return !!f.cats[categoryOfType(type)];
-}
-
 // Types still possible after the picked prefixes / suffixes: those on which at least one picked affix occurs.
 // 'No prefix' / 'No suffix' fits every type. types === null means "no restriction yet" (SMS-USR-079)
 function narrowTypesByAffix(kind, picked, types) {
@@ -1018,6 +988,58 @@ function isAffixAvailable(kind, affix, types) {
   if (types === null || affix === EQUIP_NONE) return true;
   var allowed = EQUIP_AFFIX_TYPES[kind][affix] || [];
   return types.some(function(t) { return allowed.indexOf(t) !== -1; });
+}
+
+// Sections of the Equipment filter that narrow each other (SMS-USR-089); Primary attributes never do
+var EQUIP_NARROWING_SECTIONS = ['cats', 'types', 'prefixes', 'suffixes', 'slots'];
+
+// Equipment types that the picks of one section allow; null = nothing picked there (no restriction)
+function sectionEquipTypes(f, mapName) {
+  var out = [];
+  if (mapName === 'cats' || mapName === 'slots') {
+    if (!anyPicked(f[mapName])) return null;
+    EQUIP_CATEGORIES.forEach(function(c) {
+      // Slots exist only on armor: any picked slot allows every armor type
+      var ok = mapName === 'cats' ? !!f.cats[c.key] : EQUIP_ARMOR_CATEGORIES.indexOf(c.key) !== -1;
+      if (ok) out = out.concat(c.types);
+    });
+    return out;
+  }
+  if (mapName === 'types') {
+    if (!anyPicked(f.types)) return null;
+    return Object.keys(f.types).filter(function(t) { return !!f.types[t]; });
+  }
+  if (mapName === 'prefixes') return narrowTypesByAffix('prefix', f.prefixes, null);
+  if (mapName === 'suffixes') return narrowTypesByAffix('suffix', f.suffixes, null);
+  return null;
+}
+
+// Types allowed by the picks of every narrowing section except `skip`; null = no restriction
+function equipTypesExcept(f, skip) {
+  var types = null;
+  EQUIP_NARROWING_SECTIONS.forEach(function(mapName) {
+    if (mapName === skip) return;
+    var allowed = sectionEquipTypes(f, mapName);
+    if (allowed === null) return;
+    types = types === null ? allowed.slice() : types.filter(function(t) { return allowed.indexOf(t) !== -1; });
+  });
+  return types;
+}
+
+// A choice stays available while some equipment type fits it and the picks of every other section (SMS-USR-089)
+function isChipAvailable(f, mapName, key) {
+  if (EQUIP_NARROWING_SECTIONS.indexOf(mapName) === -1) return true;
+  var types = equipTypesExcept(f, mapName);
+  if (types === null) return true;
+  if (mapName === 'cats') {
+    return EQUIP_CATEGORIES.some(function(c) {
+      return c.key === key && c.types.some(function(t) { return types.indexOf(t) !== -1; });
+    });
+  }
+  if (mapName === 'types') return types.indexOf(key) !== -1;
+  if (mapName === 'prefixes') return isAffixAvailable('prefix', key, types);
+  if (mapName === 'suffixes') return isAffixAvailable('suffix', key, types);
+  return isSlotAvailable(types);
 }
 
 // WTS data rules (SMS-USR-067): only for these boards
@@ -1444,37 +1466,24 @@ a:visited {color:#c06}
     chipRegistry.push({ chip: chip, mapName: mapName, key: key });
     sync();
   }
-  // Grey out choices that cannot occur, narrowing Category → Type → Prefix → Suffix → Slot (SMS-USR-066, 079)
+  // Grey out choices that cannot occur with the picks of the other sections, in every direction (SMS-USR-089)
   function refreshChipAvailability() {
-    function setAvailable(entry, ok) {
-      entry.chip.disabled = !ok;
-      if (!ok && tabState[entry.mapName][entry.key]) {
-        tabState[entry.mapName][entry.key] = false; // a disabled choice cannot stay picked
-        entry.chip.className = 'ssChip';
-      }
-    }
-    // Pass 0: Category chips follow the picked Types (strict across sections, SMS-USR-066)
-    chipRegistry.forEach(function(entry) {
-      if (entry.mapName === 'cats') setAvailable(entry, isCategoryAvailable(tabState, entry.key));
-    });
-    // Pass 1: Type chips follow Category; types unpicked here must not count in pass 2
-    chipRegistry.forEach(function(entry) {
-      if (entry.mapName === 'types') setAvailable(entry, isTypeAvailable(tabState, entry.key));
-    });
-    // Then each later section narrows the possible types for the next one: Prefix → Suffix → Slot (SMS-USR-079).
-    // A later pick never greys an earlier section.
-    function passFor(mapName, okFn) {
+    // A disabled choice cannot stay picked; unpicking one can narrow the other sections further, so repeat until
+    // nothing changes. Each round judges every chip against the same snapshot of the picks.
+    for (var round = 0; round < 10; round++) {
+      var picks = JSON.parse(JSON.stringify(tabState));
+      var changed = false;
       chipRegistry.forEach(function(entry) {
-        if (entry.mapName === mapName) setAvailable(entry, okFn(entry.key));
+        var ok = isChipAvailable(picks, entry.mapName, entry.key);
+        entry.chip.disabled = !ok;
+        if (!ok && tabState[entry.mapName][entry.key]) {
+          tabState[entry.mapName][entry.key] = false;
+          entry.chip.className = 'ssChip';
+          changed = true;
+        }
       });
+      if (!changed) break;
     }
-    var types = availableEquipTypes(tabState);
-    passFor('prefixes', function(key) { return isAffixAvailable('prefix', key, types); });
-    types = narrowTypesByAffix('prefix', tabState.prefixes, types);
-    passFor('suffixes', function(key) { return isAffixAvailable('suffix', key, types); });
-    types = narrowTypesByAffix('suffix', tabState.suffixes, types);
-    var slotOk = isSlotAvailable(types);
-    passFor('slots', function() { return slotOk; });
   }
   function clearEquipFilter() {
     var keep = { keyword: tabState.keyword, useRE: tabState.useRE, sort: tabState.sort, showStats: tabState.showStats };
