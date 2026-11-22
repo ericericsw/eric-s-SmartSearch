@@ -4,13 +4,12 @@
 // @namespace   SmartSearch-Cloud
 // @author      Superlatanium, nekolor, ericeric91, claude
 // @include     https://forums.e-hentai.org/index.php*showforum=*
-// @version     3.2.1
+// @version     3.3.0
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
 // @grant       GM_setValue
 // @grant       unsafeWindow
-// @connect     api.github.com
 // @connect     github.com
 // @connect     objects.githubusercontent.com
 // @connect     release-assets.githubusercontent.com
@@ -153,7 +152,7 @@ if (typeof localStorage[RECENT_KEY] === 'string' && localStorage[RECENT_KEY]) {
   }
 }
 if (needsStorageInit) {
-  localStorage[RECENT_KEY] = '{"recentSearches":["* = wildcard. Use checkbox for regular expression."], "lowestEid":"67180000"}';
+  localStorage[RECENT_KEY] = '{"recentSearches":["pha elem"], "lowestEid":"67180000"}';
 }
 
 function escapeHtml(str) {
@@ -245,7 +244,7 @@ var searchDiv = headTable.parentNode.insertBefore(document.createElement('div'),
 
 var useRE = searchDiv.appendChild(document.createElement('input'));
 useRE.type = 'checkbox';
-useRE.title = 'Use regular expression in search field?';
+useRE.title = 'Use regular expression in search field? (unticked: words in any order, e.g. pha elem)';
 useRE.checked = !!lastStorage.useSearchRegEx;
 
 var input = searchDiv.appendChild(document.createElement('input'));
@@ -256,6 +255,17 @@ input.autocomplete = 'off';
 
 var dataRecent = searchDiv.appendChild(document.createElement('datalist'));
 dataRecent.id = 'recent-searches';
+input.placeholder = 'e.g. pha elem (press ? for syntax)';
+
+// Keyword syntax help for players who never read the forum post or the README (SMS-USR-083)
+var forumHelpBtn = searchDiv.appendChild(document.createElement('button'));
+forumHelpBtn.textContent = '?';
+forumHelpBtn.title = 'Keyword syntax and examples';
+forumHelpBtn.style.marginLeft = '4px';
+var forumHelpPanel = searchDiv.parentNode.insertBefore(buildSyntaxHelp(document), searchDiv.nextSibling);
+forumHelpBtn.addEventListener('click', function() {
+  forumHelpPanel.style.display = forumHelpPanel.style.display === 'none' ? 'block' : 'none';
+});
 
 function updateRecentList() {
   dataRecent.innerHTML = '';
@@ -348,11 +358,65 @@ function getEquipFromLink(href) {
   return { eid: eidRe[1], key: eidRe[2].toLowerCase(), isIsekai: isIsekai };
 }
 
-// Non-regex search box semantics, identical to the original 1.3.7 script (SMS-USR-027):
-// '*' becomes '.+', '-[]/{}()*?^$|' are escaped, whitespace runs become '\s';
-// '.' (any char) and '+' (quantifier) are deliberately left as regex syntax.
-function buildPlainSearchPattern(query) {
-  return String(query).replace(/\*/g, '.+').replace(/[\-\[\]\/\{\}\(\)\*\?\^\$\|]/g, '\\$&').replace(/\s+/g, '\\s');
+// What a player sees on a line: HTML and BBCode tags removed (link targets are not searched), entities decoded
+function lineVisibleText(line) {
+  var text = String(line == null ? '' : line)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\[\/?(?:url|b|i|u|s|color|size|font|img|quote|code|center|left|right|indent|email|list|sub|sup|\*)(?:=[^\]]*)?\]/gi, ' ');
+  return decodeHtmlEntities(text);
+}
+
+// Keyword matcher (SMS-USR-082). Returns null for an empty keyword (every equipment line, SMS-USR-061),
+// otherwise a function(line) -> boolean. Throws on an invalid regular expression.
+//  - Default (fuzzy): words separated by spaces, all required, in any order, case-insensitive. A word that
+//    starts with a letter or digit must match the start of a word in the visible text ('pha elem' finds
+//    'Phase ... of the Elementalist'); '*' inside a word stands for any letters ('*sword' finds 'Shortsword').
+//  - RegEx box ticked: the keyword is a JavaScript regular expression tested against the raw line, as before.
+function buildKeywordMatcher(query, useRegEx) {
+  var q = String(query == null ? '' : query).trim();
+  if (!q) return null;
+  if (useRegEx) {
+    var strict = new RegExp(q, 'i');
+    return function(line) { return strict.test(line); };
+  }
+  var parts = q.split(/\s+/).filter(function(word) { return /[^*]/.test(word); }).map(function(word) {
+    var body = word.split('*').map(function(piece) {
+      return piece.replace(/[.*+?^${}()|[\]\\\/\-]/g, '\\$&');
+    }).join('\\S*');
+    return new RegExp((/^[A-Za-z0-9_]/.test(word) ? '\\b' : '') + body, 'i');
+  });
+  if (!parts.length) return null;
+  return function(line) {
+    var text = lineVisibleText(line);
+    for (var i = 0; i < parts.length; i++) {
+      if (!parts[i].test(text)) return false;
+    }
+    return true;
+  };
+}
+
+// Keyword syntax help panel (SMS-USR-083), shared by the forum bar and the results tab; hidden until '?' is pressed
+function buildSyntaxHelp(d) {
+  // Built inside the function: the forum bar calls it before a top-level var would be assigned
+  var html =
+  '<b>Keyword syntax</b> (RegEx box unticked)' +
+  '<ul style="margin:4px 0 4px 18px; padding:0;">' +
+  '<li>Words in any order, each matching the start of a word, upper or lower case: ' +
+  '<code>pha elem</code> finds <i>Legendary Phase Shoes of the Elementalist</i></li>' +
+  '<li>Every word must be on the line: <code>leg fiery oak</code>, <code>peer pha sh</code>, <code>mag shade arca</code></li>' +
+  '<li><code>*</code> stands for any letters inside a word: <code>*sword</code> finds Shortsword, Longsword</li>' +
+  '<li>Only the text you see is searched, not the link addresses. Numbers work too: <code>lv.500</code>, <code>500k</code></li>' +
+  '<li>Leave it empty to list every equipment line; otherwise type at least 3 characters.</li>' +
+  '</ul>' +
+  '<b>RegEx box ticked</b>: the keyword is a JavaScript regular expression, matched anywhere on the line: ' +
+  '<code>peerless.*(phase|cotton)</code>, <code>\\bof the (arcanist|elementalist)\\b</code>' +
+  '<div style="margin-top:4px;">Quality, type, prefix, suffix, slot and primary attributes are easier with the <b>Equipment filter</b> in the results tab.</div>';
+  var panel = d.createElement('div');
+  panel.className = 'ssHelp';
+  panel.style.cssText = 'display:none; text-align:left; margin:6px 0; padding:6px 10px; border:1px solid #9fb8bd; ' +
+    'border-radius:3px; background:#f4f9fa; color:#23404a; font-size:12px; line-height:1.6;';
+  panel.innerHTML = html;
+  return panel;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -998,7 +1062,7 @@ a:visited {color:#c06}
   var barMain = filterBar.appendChild(mk('div', 'ssBarMain'));
   var barLeft = barMain.appendChild(mk('div', 'ssBarLeft'));
   var barRow1 = barLeft.appendChild(mk('div', 'ssBarRow'));
-  addTextFilter(barRow1, 'ssKeyword', 'keyword', 'Keyword (empty = all equipment lines)');
+  addTextFilter(barRow1, 'ssKeyword', 'keyword', 'Keyword, e.g. pha elem (empty = all lines)');
   var reLabel = barRow1.appendChild(mk('label'));
   reLabel.title = 'Use regular expression in the keyword box';
   var reCbox = reLabel.appendChild(mk('input'));
@@ -1007,6 +1071,12 @@ a:visited {color:#c06}
   reCbox.addEventListener('change', function() { tabState.useRE = reCbox.checked; });
   filterSyncers.push(function() { reCbox.checked = tabState.useRE; });
   reLabel.appendChild(doc.createTextNode('RegEx'));
+  var helpBtn = barRow1.appendChild(mk('button', 'ssBtn', '?'));
+  helpBtn.title = 'Keyword syntax and examples';
+  var helpPanel = filterBar.appendChild(buildSyntaxHelp(doc));
+  helpBtn.addEventListener('click', function() {
+    helpPanel.style.display = helpPanel.style.display === 'none' ? 'block' : 'none';
+  });
   var filterToggle = barRow1.appendChild(mk('button', 'ssBtn ssBtnDark'));
   addSelect(barRow1, 'quality', [['', 'All qualities']].concat(EQUIP_QUALITIES.map(function(q) { return [q, q]; })), null);
   addRangeFilter(barRow1, 'Level', 'levelMin', 'levelMax', 'min', 'max');
@@ -1165,14 +1235,9 @@ a:visited {color:#c06}
     showResultsMessage('Keyword is too short: use at least 3 characters, or leave it empty', true);
     return;
   }
-  var re = null; // null = empty keyword: every line with an equipment link matches (SMS-USR-061)
+  var matcher = null; // null = empty keyword: every line with an equipment link matches (SMS-USR-061)
   try {
-    if (!popupQuery)
-      re = null;
-    else if (tabState.useRE === true)
-      re = new RegExp(popupQuery, 'i');
-    else
-      re = new RegExp(buildPlainSearchPattern(popupQuery), 'i');
+    matcher = buildKeywordMatcher(popupQuery, tabState.useRE === true); // fuzzy unless RegEx (SMS-USR-082)
   } catch (regexErr) {
     showResultsMessage('Invalid regular expression: ' + (regexErr && regexErr.message ? regexErr.message : String(regexErr)), true);
     return;
@@ -1284,7 +1349,7 @@ a:visited {color:#c06}
             lineEndsWithStrikethrough = openIdx > closeIdx;
           }
           lineStartsWithStrikethrough = lineEndsWithStrikethrough;
-          if (re === null ? !getEquipFromLink(line) : !re.test(line)) {
+          if (matcher === null ? !getEquipFromLink(line) : !matcher(line)) {
             return;
           }
           if (!showStrikeouts && (prevStartsWithS || lineEndsWithStrikethrough || openIdx !== -1)) {
@@ -1824,73 +1889,48 @@ async function fetchForumBoard(source) {
   return await fetchForumJsonWithRetry(source.url, false);
 }
 
-// ── Download source selection (SMS-USR-023) ──
-// Pure: among GitHub releases, pick the highest-version public archive release '<YYYYMMDDHHmmss>-<forumId>'
-// that carries 'SmartSearch_<forumId>.json'. Returns { version, tag, url } or null.
-function selectLatestArchiveRelease(releases, forumId) {
-  // Combined release '<YYYYMMDDHHmmss>' (SMS-EXP-051) or the older per-forum '<YYYYMMDDHHmmss>-<forumId>'
-  var tagRe = new RegExp('^(\\d{14})(?:-' + String(forumId).replace(/\D/g, '') + ')?$');
-  var assetName = 'SmartSearch_' + forumId + '.json';
-  var best = null;
-  (Array.isArray(releases) ? releases : []).forEach(function(rel) {
-    if (!rel || rel.draft || rel.prerelease) return;
-    var m = tagRe.exec(String(rel.tag_name || ''));
-    if (!m) return;
-    function findAsset(name) {
-      return (Array.isArray(rel.assets) ? rel.assets : []).filter(function(a) {
-        return a && a.name === name && /^https:\/\/github\.com\//i.test(String(a.browser_download_url || ''));
-      })[0];
-    }
-    var asset = findAsset(assetName);
-    if (!asset) return;
-    var gzAsset = findAsset(assetName + '.gz');
-    if (!best || m[1] > best.version) {
-      best = {
-        version: m[1],
-        tag: String(rel.tag_name),
-        url: String(asset.browser_download_url),
-        gzUrl: gzAsset ? String(gzAsset.browser_download_url) : ''
-      };
-    }
-  });
-  return best;
-}
-
-var RELEASE_API_MAX_PAGES = 3;
-
-async function findLatestArchiveRelease(forumId) {
-  var repo = normalizeGithubRepo(settings.githubRepo) || DEFAULT_SETTINGS.githubRepo;
-  var all = [];
-  for (var page = 1; page <= RELEASE_API_MAX_PAGES; page++) {
-    var list = await fetchJsonViaGM('https://api.github.com/repos/' + repo + '/releases?per_page=100&page=' + page);
-    if (!Array.isArray(list)) throw new Error('Unexpected GitHub API response');
-    all = all.concat(list);
-    if (list.length < 100) break;
+// ── Download source (SMS-USR-084) ──
+// No GitHub API: it allows 60 requests per hour per IP without a token, which players behind a shared IP use up.
+// The latest release's manifest.json (a plain release download) gives each board's version; the board file
+// comes from the same 'releases/latest/download/' link. A custom base URL serves manifest.json next to the boards.
+function getManifestUrl() {
+  if (settings.customBaseUrl && String(settings.customBaseUrl).trim()) {
+    return String(settings.customBaseUrl).trim().replace(/\/+$/, '') + '/manifest.json';
   }
-  return selectLatestArchiveRelease(all, forumId);
+  var repo = normalizeGithubRepo(settings.githubRepo) || DEFAULT_SETTINGS.githubRepo;
+  return 'https://github.com/' + repo + '/releases/latest/download/manifest.json';
 }
 
-// Returns { url, gzUrl ('' = plain JSON only), version (release version or ''), via (human-readable source) }
+async function fetchLatestManifest() {
+  var manifest = await fetchJsonViaGM(getManifestUrl());
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) throw new Error('Invalid manifest.json');
+  return manifest;
+}
+
+// Returns { url, gzUrl ('' = plain JSON only), version (the board's version in the manifest, '' = unknown), via }
 async function resolveForumDownloadSource(forumId) {
   var gzOk = canGunzip();
-  if (settings.customBaseUrl && String(settings.customBaseUrl).trim()) {
-    // A user-defined mirror base URL bypasses the GitHub API entirely
-    var mirrorUrl = getForumAssetUrl(forumId);
-    return { url: mirrorUrl, gzUrl: gzOk ? mirrorUrl + '.gz' : '', version: '', via: 'custom base URL' };
-  }
-  var reason = '';
+  var url = getForumAssetUrl(forumId);
+  var via = (settings.customBaseUrl && String(settings.customBaseUrl).trim()) ? 'custom base URL' : 'latest release';
+  var manifest = null;
   try {
-    var best = await findLatestArchiveRelease(forumId);
-    if (best) {
-      return { url: best.url, gzUrl: gzOk ? best.gzUrl : '', version: best.version, via: 'release ' + best.tag };
-    }
-    reason = 'no matching archive release';
-  } catch (apiErr) {
-    reason = (apiErr && apiErr.status) ? ('GitHub API HTTP ' + apiErr.status) : 'GitHub API unreachable';
-    console.warn('[SmartSearch] Release API failed, falling back to latest-' + forumId, apiErr);
+    manifest = await fetchLatestManifest();
+  } catch (manifestErr) {
+    // Without the manifest the board file itself is downloaded; its own version decides (SMS-USR-071)
+    console.warn('[SmartSearch] manifest.json unavailable, downloading the board directly', manifestErr);
+    return { url: url, gzUrl: gzOk ? url + '.gz' : '', version: '', via: via + ' (no manifest)' };
   }
-  var latestUrl = getForumAssetUrl(forumId);
-  return { url: latestUrl, gzUrl: gzOk ? latestUrl + '.gz' : '', version: '', via: 'latest release (fallback: ' + reason + ')' };
+  var entry = manifest.forums && manifest.forums[String(forumId)];
+  if (!entry || typeof entry !== 'object') {
+    throw new Error((FORUM_LABELS[forumId] || forumId) + ' is not in the latest database release ' + (manifest.version || ''));
+  }
+  var version = String(entry.version || manifest.version || '');
+  return {
+    url: url,
+    gzUrl: gzOk && entry.asset_gz ? url + '.gz' : '',
+    version: version,
+    via: via + (manifest.version ? ' ' + manifest.version : '')
+  };
 }
 
 async function updateCurrentForumDatabase() {
@@ -1908,7 +1948,7 @@ async function updateCurrentForumDatabase() {
   updateStatusSpan('Downloading ' + assetName + '...');
 
   try {
-    // Only the current forum board: highest archive release '<version>-<forum>', else rolling 'latest-<forum>' (SMS-USR-023)
+    // Only the current forum board, version from the latest release's manifest.json (SMS-USR-084)
     var source = await resolveForumDownloadSource(forum);
     var localVersion = (settings.forumVersions && settings.forumVersions[forum]) || '';
     if (source.version && source.version === localVersion) {
@@ -1931,7 +1971,7 @@ async function updateCurrentForumDatabase() {
       return;
     }
     var remoteThreadCount = Object.keys(json.value).length;
-    // Remember the release version when known, so the next click compares release to release (SMS-USR-071)
+    // Remember the board's version from the manifest when known, so a carried-over board is not downloaded again (SMS-USR-084)
     var remoteVersion = String(source.version || json.version || formatTimestampVersion(new Date()));
 
     await new Promise(function(resolve, reject) {

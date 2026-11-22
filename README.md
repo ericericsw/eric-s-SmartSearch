@@ -53,11 +53,20 @@ The database Releases are published by the server; do not edit or delete them by
   兩者的 `.json.gz` 壓縮版，以及 `manifest.json`。
 - The script downloads only the board you are viewing, preferring the compressed copy (about 0.7 MB for WTS).
   腳本只下載你正在看的版塊，並優先下載壓縮版（WTS 約 0.7 MB）。
+- It first reads the latest Release's small `manifest.json` to check the version, and does not use GitHub's API,
+  so players sharing one IP address do not run into the API's hourly limit.
+  腳本先讀最新 Release 裡的小檔 `manifest.json` 比對版本，不使用 GitHub API，因此多人共用同一個 IP 也不會碰到 API 的每小時上限。
 - Equipment is re-checked on HentaiVerse every 5-9 days, so a sold item can stay listed for a few days.
   裝備每 5～9 天會向 HentaiVerse 重查一次，已售出的裝備可能還會顯示幾天。
 
 ## Features / 功能
 
+- **Keyword**: type the start of each word, in any order and any case: `pha elem` finds *Phase ... of the Elementalist*,
+  `leg fiery oak` finds *Legendary Fiery Oak Staff ...*; `*` stands for any letters inside a word (`*sword`).
+  Only the text you see is searched, not link addresses. Tick **RegEx** to type a regular expression instead.
+  Press the **?** button next to the keyword box for examples.
+  **關鍵字**：輸入每個字的開頭即可，順序與大小寫不拘：`pha elem` 找到 Phase … of the Elementalist、`leg fiery oak` 找到 Legendary Fiery Oak Staff …；
+  `*` 代表字內任意字母（`*sword`）。只比對看得到的文字，不比對連結網址。勾選 **RegEx** 改用正規表示式。按關鍵字框旁的 **?** 可看範例。
 - **Filter Search** searches your keyword right away; **Open Search Window** opens an empty search tab so you can set the conditions first.
   **Filter Search** 直接用關鍵字搜尋；**Open Search Window** 開啟空白搜尋分頁，先設定條件再搜尋。
 - Results open in a new browser tab with a filter bar that stays at the top. Conditions are applied when you press **Search**.
@@ -85,11 +94,11 @@ Your settings and databases stay in your browser. The script does not read or ch
 ## Credits / 致謝
 
 Based on [SmartSearch](https://forums.e-hentai.org/index.php?showtopic=211111) by Superlatanium (original author),
-with the modified version by nekolor. The search page, wildcard and regular-expression search, Lowest EID,
+with the modified version by nekolor. The search page, regular-expression search, Lowest EID,
 thread title filters and Ignore all come from the original script. Thank you both.
 
 本腳本以 [SmartSearch](https://forums.e-hentai.org/index.php?showtopic=211111) 為基礎改寫。
-搜尋頁面、萬用字元與正規表示式搜尋、Lowest EID、討論串標題過濾與忽略功能都來自原版。
+搜尋頁面、正規表示式搜尋、Lowest EID、討論串標題過濾與忽略功能都來自原版。
 感謝原作者 Superlatanium，以及提供修改版的 nekolor。
 
 ## License
