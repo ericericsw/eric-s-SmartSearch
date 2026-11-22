@@ -4,7 +4,7 @@
 // @namespace   SmartSearch-Cloud
 // @author      Superlatanium, nekolor, ericeric91, claude
 // @include     https://forums.e-hentai.org/index.php*showforum=*
-// @version     3.3.1
+// @version     3.4.0
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
@@ -19,7 +19,7 @@
 // ==/UserScript==
 
 // Shown in the Settings panel title: read from the header's @version so the two never drift apart (SMS-USR-085)
-var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.3.1';
+var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.4.0';
 
 // Board 78 (WTB) is not supported for now: its posts only describe wanted equipment in free text (SMS-USR-080)
 const FORUM_LABELS = {
@@ -37,8 +37,21 @@ const DEFAULT_SETTINGS = {
   daysAgoLimit: 60,
   wildGuess: false,
   hideLocked: false,
+  language: 'en', // Settings panel language: 'en' (default) or 'zh' adds the Chinese notes (SMS-USR-087)
   forumVersions: { '77': '', '90': '' }
 };
+
+// Settings panel languages (SMS-USR-087). English is the default; Chinese only adds notes after the English labels.
+var UI_LANGUAGES = [['en', 'English'], ['zh', '中文']];
+
+function uiLanguage(cfg) {
+  return cfg && cfg.language === 'zh' ? 'zh' : 'en';
+}
+
+// ' (<Chinese note>)' in the Chinese language, nothing in English
+function zhNote(lang, text) {
+  return lang === 'zh' ? ' (' + escapeHtml(text) + ')' : '';
+}
 
 // SmartSearch-Cloud keeps its own storage and never reads the original HV SmartSearch's or 2.x's (SMS-USR-078)
 var SETTINGS_KEY = 'SmartSearchCloudSettings';
@@ -394,6 +407,65 @@ function buildKeywordMatcher(query, useRegEx) {
     }
     return true;
   };
+}
+
+// ── Filter import / export (SMS-USR-086) ──
+// One line of JSON that a player can keep or share. Only the search conditions are included; Lowest EID,
+// the thread title filter and Show Stats are view settings of each board and stay as they are.
+var FILTER_SHARE_TAG = 'SmartSearchCloudFilter';
+var FILTER_SHARE_TEXT_FIELDS = ['keyword', 'quality', 'levelMin', 'levelMax', 'priceMin', 'priceMax', 'rollMin', 'rollMax', 'sort'];
+var FILTER_SHARE_SELECT_FIELDS = ['quality', 'sort'];
+var FILTER_SHARE_MAPS = ['cats', 'types', 'prefixes', 'suffixes', 'slots', 'stats'];
+
+function exportFilterText(state) {
+  var out = {};
+  out[FILTER_SHARE_TAG] = 1;
+  FILTER_SHARE_TEXT_FIELDS.forEach(function(field) {
+    var value = String(state[field] == null ? '' : state[field]).trim();
+    if (value) out[field] = value;
+  });
+  if (state.useRE === true) out.useRE = true;
+  FILTER_SHARE_MAPS.forEach(function(mapName) {
+    var map = state[mapName] || {};
+    var picked = Object.keys(map).filter(function(key) { return map[key]; });
+    if (picked.length) out[mapName] = picked;
+  });
+  return JSON.stringify(out);
+}
+
+// Reads text made by exportFilterText() into a fresh filter. isAllowed(field, value) says whether this script
+// has that select option or chip; anything else is skipped (a newer or older script may differ).
+// Returns { filter, skipped: [labels] }; throws an Error when the text is not an exported filter.
+function parseFilterText(text, isAllowed) {
+  var notFilter = 'This is not SmartSearch-Cloud filter text: paste the whole line made by Export';
+  var obj;
+  try {
+    obj = JSON.parse(String(text == null ? '' : text).trim());
+  } catch (parseErr) {
+    throw new Error(notFilter);
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj) || obj[FILTER_SHARE_TAG] !== 1) throw new Error(notFilter);
+  var filter = emptyEquipFilter();
+  var skipped = [];
+  FILTER_SHARE_TEXT_FIELDS.forEach(function(field) {
+    if (obj[field] == null || typeof obj[field] === 'object') return;
+    var value = String(obj[field]).trim();
+    if (FILTER_SHARE_SELECT_FIELDS.indexOf(field) !== -1 && !isAllowed(field, value)) {
+      skipped.push(field + ' ' + value);
+      return;
+    }
+    filter[field] = value;
+  });
+  filter.useRE = obj.useRE === true;
+  FILTER_SHARE_MAPS.forEach(function(mapName) {
+    if (!Array.isArray(obj[mapName])) return;
+    obj[mapName].forEach(function(key) {
+      key = String(key);
+      if (isAllowed(mapName, key)) filter[mapName][key] = true;
+      else skipped.push(key);
+    });
+  });
+  return { filter: filter, skipped: skipped };
 }
 
 // Keyword syntax help panel (SMS-USR-083), shared by the forum bar and the results tab; hidden until '?' is pressed
@@ -945,6 +1017,9 @@ a:visited {color:#c06}
 .ssBarSide .ssTitleText {width:110px;}
 .ssSideNote {font-size:11px; color:#4b6870; min-width:60px;}
 .ssHint {color:#4b6870; margin-top:30px;}
+.ssShare {text-align:left; margin:6px 0; padding:6px 10px; border:1px solid #9fb8bd; border-radius:3px; background:#f4f9fa; font-size:12px;}
+.ssShare textarea {width:100%; box-sizing:border-box; font-family:monospace; font-size:12px; margin:4px 0;}
+.ssShareFoot {display:flex; align-items:center; gap:8px;}
 `;
     w.document.head.appendChild(w.document.createElement('style')).innerHTML = cssSource;
   }
@@ -1079,13 +1154,13 @@ a:visited {color:#c06}
     helpPanel.style.display = helpPanel.style.display === 'none' ? 'block' : 'none';
   });
   var filterToggle = barRow1.appendChild(mk('button', 'ssBtn ssBtnDark'));
-  addSelect(barRow1, 'quality', [['', 'All qualities']].concat(EQUIP_QUALITIES.map(function(q) { return [q, q]; })), null);
+  var qualitySel = addSelect(barRow1, 'quality', [['', 'All qualities']].concat(EQUIP_QUALITIES.map(function(q) { return [q, q]; })), null);
   addRangeFilter(barRow1, 'Level', 'levelMin', 'levelMax', 'min', 'max');
   addRangeFilter(barRow1, 'Price', 'priceMin', 'priceMax', 'min', 'max');
   addRangeFilter(barRow1, 'ROLL %', 'rollMin', 'rollMax', '0', '100');
 
   var barRow2 = barLeft.appendChild(mk('div', 'ssBarRow'));
-  addSelect(barRow2, 'sort', [
+  var sortSel = addSelect(barRow2, 'sort', [
     ['', 'Sort: post edited (newest)'],
     ['price-desc', 'Price: high to low'],
     ['price-asc', 'Price: low to high'],
@@ -1114,6 +1189,11 @@ a:visited {color:#c06}
   // Top-right: Lowest EID and thread-title filter, applied when Search is pressed (SMS-USR-068)
   var barSide = barMain.appendChild(mk('div', 'ssBarSide'));
   var eidRow = barSide.appendChild(mk('div', 'ssSideRow'));
+  // Filter import / export (SMS-USR-086), left of Lowest EID; the text box opens under the bar
+  var exportBtn = eidRow.appendChild(mk('button', 'ssBtn', 'Export'));
+  exportBtn.title = 'Copy these search conditions as text, to keep or share';
+  var importBtn = eidRow.appendChild(mk('button', 'ssBtn', 'Import'));
+  importBtn.title = 'Paste conditions made by Export, then search';
   eidRow.appendChild(mk('span', '', 'Lowest EID'));
   var lowestEidInput = eidRow.appendChild(mk('input', 'ssEid'));
   lowestEidInput.type = 'text';
@@ -1135,6 +1215,70 @@ a:visited {color:#c06}
     box.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') runSearchFromBar();
     });
+  });
+
+  var sharePanel = filterBar.appendChild(mk('div', 'ssShare'));
+  sharePanel.style.display = 'none';
+  var shareNote = sharePanel.appendChild(mk('div'));
+  var shareText = sharePanel.appendChild(mk('textarea'));
+  shareText.rows = 3;
+  shareText.spellcheck = false;
+  var shareFoot = sharePanel.appendChild(mk('div', 'ssShareFoot'));
+  var shareApply = shareFoot.appendChild(mk('button', 'ssBtn ssBtnDark', 'Apply and search'));
+  var shareClose = shareFoot.appendChild(mk('button', 'ssBtn', 'Close'));
+  var shareStatus = shareFoot.appendChild(mk('span', 'ssSideNote'));
+  function setShareStatus(text, isError) {
+    shareStatus.textContent = text;
+    shareStatus.style.color = isError ? 'red' : '';
+  }
+  function isShareValueAllowed(field, value) {
+    if (field === 'quality' || field === 'sort') {
+      var sel = field === 'quality' ? qualitySel : sortSel;
+      return Array.prototype.some.call(sel.options, function(o) { return o.value === value; });
+    }
+    return chipRegistry.some(function(entry) { return entry.mapName === field && entry.key === value; });
+  }
+  exportBtn.addEventListener('click', function() {
+    var text = exportFilterText(tabState);
+    shareNote.textContent = 'Copy this line to keep or share the conditions above (Lowest EID and thread title are not included).';
+    shareText.value = text;
+    shareApply.style.display = 'none';
+    sharePanel.style.display = 'block';
+    shareText.focus();
+    shareText.select();
+    setShareStatus('Press Ctrl+C to copy', false);
+    var clip = w.navigator && w.navigator.clipboard;
+    if (clip && clip.writeText) {
+      clip.writeText(text).then(function() { setShareStatus('Copied to clipboard', false); }, function() {});
+    }
+  });
+  importBtn.addEventListener('click', function() {
+    shareNote.textContent = 'Paste a line made by Export. It replaces the conditions above, then searches.';
+    shareText.value = '';
+    shareApply.style.display = '';
+    sharePanel.style.display = 'block';
+    setShareStatus('', false);
+    shareText.focus();
+  });
+  shareClose.addEventListener('click', function() { sharePanel.style.display = 'none'; });
+  shareApply.addEventListener('click', function() {
+    var result;
+    try {
+      result = parseFilterText(shareText.value, isShareValueAllowed);
+    } catch (importErr) {
+      setShareStatus(importErr && importErr.message ? importErr.message : String(importErr), true);
+      return;
+    }
+    tabState = Object.assign(result.filter, { showStats: tabState.showStats });
+    filterSyncers.forEach(function(fn) { fn(); });
+    refreshChipAvailability();
+    updateFilterToggleLabel();
+    if (result.skipped.length) {
+      setShareStatus('Imported; not found in this version and skipped: ' + result.skipped.join(', '), true);
+    } else {
+      sharePanel.style.display = 'none';
+    }
+    runSearchFromBar();
   });
 
   var filterPanel = filterBar.appendChild(mk('div', 'ssPanel'));
@@ -2187,6 +2331,10 @@ function openSettingsModal() {
   var wtsVer = escapeHtml(formatVersionLabel(settings.forumVersions && settings.forumVersions['77']));
   var iskVer = escapeHtml(formatVersionLabel(settings.forumVersions && settings.forumVersions['90']));
   var daysLimitVal = clampDaysLimit(settings.daysAgoLimit);
+  var lang = uiLanguage(settings);
+  var languageOptions = UI_LANGUAGES.map(function(l) {
+    return '<option value="' + l[0] + '"' + (l[0] === lang ? ' selected' : '') + '>' + escapeHtml(l[1]) + '</option>';
+  }).join('');
 
   panel.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #555;padding-bottom:10px;margin-bottom:16px;">
@@ -2195,21 +2343,26 @@ function openSettingsModal() {
     </div>
 
     <div style="margin-bottom:16px;">
-      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">Database Update Mode (按下 Update Database 時的更新模式)</div>
+      <span style="font-weight:bold;color:#fff;">Language${zhNote(lang, '語系')}: </span>
+      <select id="ss-language" style="background:#333;color:#fff;border:1px solid #777;padding:2px 4px;">${languageOptions}</select>
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">Database Update Mode${zhNote(lang, '按下 Update Database 時的更新模式')}</div>
       <label style="display:block;margin-bottom:4px;cursor:pointer;">
         <input type="radio" name="ss-sync-mode" value="full" ${settings.syncMode === 'full' ? 'checked' : ''} />
-        <strong>Full Rebuild (完全重建)</strong>
+        <strong>Full Rebuild${zhNote(lang, '完全重建')}</strong>
         <div style="color:#aaa;font-size:12px;margin-left:22px;">Clear old threads in the current board's DB (${DB_NAME}) and replace with latest Cloud DB. Your personal Ignored threads/posts &amp; Search History are preserved.</div>
       </label>
       <label style="display:block;cursor:pointer;">
         <input type="radio" name="ss-sync-mode" value="incremental" ${settings.syncMode === 'incremental' ? 'checked' : ''} />
-        <strong>Incremental Merge (增量合併)</strong>
+        <strong>Incremental Merge${zhNote(lang, '增量合併')}</strong>
         <div style="color:#aaa;font-size:12px;margin-left:22px;">Keep older threads already in the current board's DB (${DB_NAME}) and merge/overwrite updated threads from Cloud DB.</div>
       </label>
     </div>
 
     <div style="margin-bottom:16px;">
-      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">Independent Forum Databases &amp; Cloud Source (各版塊獨立資料庫狀態)</div>
+      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">Independent Forum Databases &amp; Cloud Source${zhNote(lang, '各版塊獨立資料庫狀態')}</div>
       <div style="color:#bbb;font-size:12px;margin-bottom:8px;">
         Each forum board maintains its own isolated IndexedDB database and is only downloaded when you click <strong>Update Database</strong> inside that board:<br/>
         • <strong>WTS (77)</strong> [SmartSearchCloudDb_77]: ${wtsVer}<br/>
@@ -2222,23 +2375,23 @@ function openSettingsModal() {
     </div>
 
     <div style="margin-bottom:16px;">
-      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">Search Display &amp; Thread Filtering (搜尋顯示與置頂過濾)</div>
+      <div style="font-weight:bold;color:#fff;margin-bottom:6px;">Search Display &amp; Thread Filtering${zhNote(lang, '搜尋顯示與置頂過濾')}</div>
       <label style="display:block;margin-bottom:6px;cursor:pointer;">
         <input type="checkbox" id="ss-exclude-pinned" ${settings.excludePinned ? 'checked' : ''} />
-        <strong>Exclude Pinned Threads (排除置頂討論串)</strong>
+        <strong>Exclude Pinned Threads${zhNote(lang, '排除置頂討論串')}</strong>
         <div style="color:#aaa;font-size:12px;margin-left:22px;">Hide forum announcement and pinned threads from search results.</div>
       </label>
       <label style="display:block;margin-bottom:6px;cursor:pointer;">
         <input type="checkbox" id="ss-hide-locked" ${settings.hideLocked ? 'checked' : ''} />
-        <strong>Hide Locked Threads (隱藏已鎖定討論串)</strong>
+        <strong>Hide Locked Threads${zhNote(lang, '隱藏已鎖定討論串')}</strong>
       </label>
       <label style="display:block;margin-bottom:6px;cursor:pointer;">
         <input type="checkbox" id="ss-show-strikeouts" ${settings.showStrikeouts ? 'checked' : ''} />
-        <strong>Show Strikeouts (顯示已被 [s] 刪除線劃掉的裝備)</strong>
+        <strong>Show Strikeouts${zhNote(lang, '顯示已被 [s] 刪除線劃掉的裝備')}</strong>
       </label>
       <label style="display:block;margin-bottom:6px;cursor:pointer;">
         <input type="checkbox" id="ss-wild-guess" ${settings.wildGuess ? 'checked' : ''} />
-        <strong>Wild Guess Price (寬鬆猜測未標明單位的價格數字)</strong>
+        <strong>Wild Guess Price${zhNote(lang, '寬鬆猜測未標明單位的價格數字')}</strong>
       </label>
       <div style="margin-top:6px;">
         <span>Highlight posts older than (days): </span>
@@ -2247,7 +2400,7 @@ function openSettingsModal() {
     </div>
 
     <div style="border:1px solid #bbb;background:#2b2e32;padding:12px;margin-bottom:16px;">
-      <div style="font-weight:bold;color:#fff;margin-bottom:8px;text-align:center;">Excluded Poster UIDs / Names (排除特定發文者)</div>
+      <div style="font-weight:bold;color:#fff;margin-bottom:8px;text-align:center;">Excluded Poster UIDs / Names${zhNote(lang, '排除特定發文者')}</div>
       <table style="width:100%;border-collapse:collapse;margin-top:4px;" id="ss-excluded-table">
         <thead>
           <tr style="border:none;color:#ddd;font-size:12px;">
@@ -2317,6 +2470,7 @@ function openSettingsModal() {
     settings.showStrikeouts = !!panel.querySelector('#ss-show-strikeouts').checked;
     settings.wildGuess = !!panel.querySelector('#ss-wild-guess').checked;
     settings.daysAgoLimit = clampDaysLimit(panel.querySelector('#ss-days-limit').value);
+    settings.language = uiLanguage({ language: panel.querySelector('#ss-language').value });
 
     var exList = [];
     [].forEach.call(tbody.querySelectorAll('tr'), function(tr) {
@@ -2343,6 +2497,10 @@ function openSettingsModal() {
     }
   }
 
+  panel.querySelector('#ss-language').addEventListener('change', function() {
+    if (!collectAndSave()) return;
+    openSettingsModal();
+  });
   panel.querySelector('#ss-set-close-top').addEventListener('click', closeModal);
   panel.querySelector('#ss-set-cancel').addEventListener('click', closeModal);
   panel.querySelector('#ss-set-save').addEventListener('click', function() {

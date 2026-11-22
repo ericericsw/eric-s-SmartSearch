@@ -79,11 +79,14 @@ The database Releases are published by the server; do not edit or delete them by
   **Show Stats** 會加上品質、類型、PAB、ROLL %、Base avg 欄位。
 - In WTS, only lines that link a Tradeable equipment held by the poster are shown.
   WTS 只列出連到 Tradeable 裝備、且裝備仍在發文者手上的行。
+- **Export / Import** (top right of the results tab) saves the search conditions as one line of text, to keep or to share;
+  pasting it with Import restores the same conditions and searches.
+  結果分頁右上角的 **Export／Import** 把搜尋條件存成一行文字，可自己保存或分享；用 Import 貼上即還原同樣的條件並搜尋。
 - Lowest EID and thread title filters, Ignore for threads and posts, and Backup / Restore / Delete for each board's database.
   Lowest EID 與討論串標題過濾、忽略討論串或貼文，以及各版塊資料庫的備份／還原／刪除。
-- Settings: Full Rebuild or Incremental update, exclude pinned threads, hide locked threads, show struck-out lines,
+- Settings: language (English by default; 中文 adds Chinese notes to the Settings panel), Full Rebuild or Incremental update, exclude pinned threads, hide locked threads, show struck-out lines,
   wild guess prices without units, highlight old posts, and a list of posters (UID or name) to exclude.
-  設定：完全重建或增量合併、排除置頂討論串、隱藏已鎖定討論串、顯示被刪除線劃掉的行、寬鬆猜測沒有單位的價格、標示過舊的貼文，以及要排除的發文者（UID 或名稱）。
+  設定：語系（預設英文，選「中文」時設定面板加註中文）、完全重建或增量合併、排除置頂討論串、隱藏已鎖定討論串、顯示被刪除線劃掉的行、寬鬆猜測沒有單位的價格、標示過舊的貼文，以及要排除的發文者（UID 或名稱）。
 
 It only activates on the WTS (77) and Isekai Trade (90) boards. WTB is not supported for now.
 只在 WTS（77）與 Isekai Trade（90）版塊啟用，WTB 暫不支援。
