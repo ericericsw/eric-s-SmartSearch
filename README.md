@@ -69,15 +69,20 @@ The database Releases are published by the server; do not edit or delete them by
   `*` 代表字內任意字母（`*sword`）。只比對看得到的文字，不比對連結網址。勾選 **RegEx** 改用正規表示式。按關鍵字框旁的 **?** 可看範例。
 - **Filter Search** searches your keyword right away; **Open Search Window** opens an empty search tab so you can set the conditions first.
   **Filter Search** 直接用關鍵字搜尋；**Open Search Window** 開啟空白搜尋分頁，先設定條件再搜尋。
-- Results open in a new browser tab with a filter bar that stays at the top. Conditions are applied when you press **Search**.
-  搜尋結果開在新分頁，篩選列會固定在頂端；條件在按下 **Search** 時才套用。
+- Results open on the search page `https://forums.e-hentai.org/smartsearch-cloud` (`?f=ISK` for Isekai Trade). You can also type that address,
+  bookmark it or reload it; it switches between WTS and ISK and has Update Database and Settings too. The filter bar stays at the top,
+  and conditions are applied when you press **Search**.
+  搜尋結果開在搜尋頁 `https://forums.e-hentai.org/smartsearch-cloud`（Isekai Trade 加 `?f=ISK`），也可以直接輸入網址、加書籤或重新整理；
+  頁面上可切換 WTS／ISK，也有更新資料庫與設定。篩選列固定在頂端，條件在按下 **Search** 時才套用。
 - **Equipment filter**: Category, Type, Prefix, Suffix, Slot and Primary attributes. Choices that cannot occur with what you picked are greyed out.
   **Equipment filter**：分類、類型、字首、字尾、部位與主屬性；與已選條件不可能同時成立的選項會反灰。
 - Quality, Level, Price and Roll% (base percentage) ranges, and sorting by post time, price, level or Roll%.
   品質、等級、價格、Roll%（Base 百分比）範圍篩選，並可依貼文時間、價格、等級或 Roll% 排序。
-- **WTB** button on each result opens MoogleMail with a ready-made `WTB <EID>` message to the seller; for the rental and exchange shops it opens a reply in their thread
-  with `[<EID>] 7days` or `Claim <EID>` instead. Nothing is sent until you press Send yourself.
-  每列的 **WTB** 按鈕會開啟 MoogleMail 並填好給賣家的 `WTB <EID>` 信；租借店與交換店則改開該主題的回覆頁並填好 `[<EID>] 7days` 或 `Claim <EID>`。都要你自己按送出。
+- **MM** and **Forum** buttons on each result: MM opens MoogleMail with a ready-made `WTB <EID>` message to the seller, Forum opens a reply in the thread with the same text.
+  The rental and exchange shops only take forum replies (`[<EID>] 7days` / `Claim <EID>`); eric's auction only takes MoogleMail bids (`Auction Bid`, `<item ID> start`);
+  other auctions get a forum reply with the item code, and you add your bid. Nothing is sent until you press Send yourself.
+  每列有 **MM** 與 **論壇** 兩顆按鈕：MM 開啟 MoogleMail 並填好給賣家的 `WTB <EID>` 信，論壇開啟該討論串的回覆頁並填好同樣的文字。租借店、交換店只受理論壇回覆（`[<EID>] 7days`／`Claim <EID>`）；
+  eric 的拍賣只受理 MM 出價（`Auction Bid`、`<品項ID> start`）；其他拍賣開回覆頁並填好品項代碼，出價請自己補。都要你自己按送出。
 - **Show Stats** adds Quality, PAB, Roll% and Base avg columns.
   **Show Stats** 會加上品質、PAB、Roll%、Base avg 欄位。
 - In WTS, only lines that link a Tradeable equipment held by the poster are shown.

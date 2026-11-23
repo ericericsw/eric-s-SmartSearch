@@ -4,10 +4,11 @@
 // @namespace   SmartSearch-Cloud
 // @author      Superlatanium, nekolor, ericeric91, claude
 // @include     https://forums.e-hentai.org/index.php*showforum=*
+// @include     https://forums.e-hentai.org/smartsearch-cloud*
 // @include     https://forums.e-hentai.org/index.php?act=post*
 // @include     https://hentaiverse.org/?s=Bazaar&ss=mm&filter=new*
 // @include     https://hentaiverse.org/isekai/?s=Bazaar&ss=mm&filter=new*
-// @version     3.6.0
+// @version     3.7.0
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
@@ -23,7 +24,7 @@
 // ==/UserScript==
 
 // Shown in the Settings panel title: read from the header's @version so the two never drift apart (SMS-USR-085)
-var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.6.0';
+var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.7.0';
 
 // Board 78 (WTB) is not supported for now: its posts only describe wanted equipment in free text (SMS-USR-080)
 const FORUM_LABELS = {
@@ -188,7 +189,6 @@ var I18N_ZH = {
   'Keyword is too short: use at least 3 characters, or leave it empty': '關鍵字太短：至少 3 個字元，或留空',
   'Invalid regular expression: {0}': '正規表示式無效：{0}',
   'Searching...': '搜尋中…',
-  'Forum {0}': '{0} 版塊',
   '{0} threads saved in {1} database': '{1} 資料庫已儲存 {0} 個討論串',
   'lowestEid is not an integer': '最低 EID 不是整數',
   '{0} hidden': '已隱藏 {0}',
@@ -219,9 +219,18 @@ var I18N_ZH = {
   'Remove from ignoredThreads': '從已忽略的討論串移除',
   'Remove from ignoredPosts': '從已忽略的貼文移除',
   'Reload interface': '重新載入介面',
+  'Board: ': '版塊：',
+  'Forum': '論壇',
   'Open MoogleMail with a WTB message to the poster': '開啟 MoogleMail，寫好給發文者的 WTB 信',
+  'Open a reply in this thread with a WTB message': '開啟這個討論串的回覆頁，寫好 WTB 訊息',
   'Open a reply in this rental shop thread with the rental request ({0} days)': '開啟這家租借店主題的回覆頁，填好租借叫號（{0} 天）',
   'Open a reply in this exchange shop thread with the claim command': '開啟這家交換店主題的回覆頁，填好領取指令',
+  'This shop takes requests only as replies in its thread': '這家店只受理在主題中回覆的指令',
+  'Open MoogleMail with an Auction Bid for {0} at the start price': '開啟 MoogleMail，寫好 {0} 的 Auction Bid（底價出價）',
+  'No auction item ID (like 001Sta01) on this line yet': '這一行還沒有拍賣品項編號（如 001Sta01）',
+  'The auction takes bids only by MoogleMail': '拍賣只受理 MoogleMail 出價',
+  'Open a reply in this auction thread with the item code; add your bid': '開啟這個拍賣討論串的回覆頁並填好品項代碼，請自行補上出價',
+  'Other auctions: reply in their thread': '其他拍賣請在其討論串回覆',
   'SmartSearch-Cloud filled this in. Check it, then send it yourself.': 'SmartSearch-Cloud 已自動填好內容，請確認後自行送出。',
   // Settings panel
   '⚙️ SmartSearch-Cloud Settings (v{0} — Current Board: {1})': '⚙️ SmartSearch-Cloud 設定（v{0} — 目前版塊：{1}）',
@@ -473,9 +482,10 @@ function applyRuntimeSettings() {
 const recent_searches_max = 18;
 
 // ── WTB button (SMS-USR-090) ──
-// Shops that take commands as forum replies in their own thread instead of MoogleMail
-var RENTAL_SHOP = { name: 'HVEquipRental', uid: '7912010' }; // rental call: "[<EID>] <N>days"
-var EXCHANGE_SHOP = { name: 'HVEquipExchange', uid: '10063793' }; // exchange claim: "Claim <EID>"
+// Shops with their own command syntax (SMS-USR-093)
+var RENTAL_SHOP = { name: 'HVEquipRental', uid: '7912010' }; // forum reply only: "[<EID>] <N>days"
+var EXCHANGE_SHOP = { name: 'HVEquipExchange', uid: '10063793' }; // forum reply only: "Claim <EID>"
+var AUCTION_SHOP = { name: 'HVEquipAuction', uid: '10151793' }; // MoogleMail only: "Auction Bid" / "<item ID> <bid>"
 var RENTAL_DAYS = 7;
 
 function isShopThread(thread, shop) {
@@ -484,18 +494,37 @@ function isShopThread(thread, shop) {
   return String(thread.opName || '').trim().toLowerCase() === shop.name.toLowerCase();
 }
 
-// What the WTB button sends for one equipment line. The forum is in English, so these texts are English only.
-// { kind: 'reply', text } for the rental and exchange shops, else { kind: 'mm', recipient, subject, body }
-function buildWtbRequest(thread, eid, equipName, priceText) {
-  if (isShopThread(thread, EXCHANGE_SHOP)) return { kind: 'reply', text: 'Claim ' + eid };
-  if (isShopThread(thread, RENTAL_SHOP)) return { kind: 'reply', text: '[' + eid + '] ' + RENTAL_DAYS + 'days' };
+// What the MM and Forum buttons send for one equipment line (SMS-USR-090, 093). The forum is in English, so
+// these texts are English only. Returns { mm, forum }: each is { kind: 'mm', recipient, subject, body } /
+// { kind: 'reply', text }, or { locked: reason } (an English key for tl()) when that way is not offered.
+// lineText is the visible text of the line, for auction item IDs and codes.
+function buildContactRequests(thread, eid, equipName, priceText, lineText) {
+  var onlyForum = { locked: 'This shop takes requests only as replies in its thread' };
+  if (isShopThread(thread, EXCHANGE_SHOP)) return { mm: onlyForum, forum: { kind: 'reply', text: 'Claim ' + eid } };
+  if (isShopThread(thread, RENTAL_SHOP)) {
+    return { mm: onlyForum, forum: { kind: 'reply', text: '[' + eid + '] ' + RENTAL_DAYS + 'days' } };
+  }
+  var text = String(lineText || '');
+  if (isShopThread(thread, AUCTION_SHOP)) {
+    // Bids go by MoogleMail with the official item ID (AUC-CMD-100); forum replies are not taken (I-AUC-333)
+    var itemId = text.match(/\b(\d{3}[A-Za-z]{3}\d{2,})\b/);
+    return {
+      mm: itemId ? { kind: 'mm', recipient: AUCTION_SHOP.name, subject: 'Auction Bid', body: itemId[1] + ' start' }
+        : { locked: 'No auction item ID (like 001Sta01) on this line yet' },
+      forum: { locked: 'The auction takes bids only by MoogleMail' }
+    };
+  }
+  if (/auction/i.test(String((thread && thread.title) || ''))) {
+    // Other auctions: forum only, with the line's own code (e.g. "[sola01] ...") or the EID; the bid is left to the player
+    var code = text.match(/^\s*\[([^\]\s]+)\]/);
+    return { mm: { locked: 'Other auctions: reply in their thread' }, forum: { kind: 'reply', text: (code ? code[1] : eid) + ' ' } };
+  }
   var name = String(equipName || '').trim();
   var price = String(priceText || '').trim();
+  var body = 'I Want to buy equip : ' + eid + (name ? ' ' + name : '') + (price ? ' @ ' + price : '');
   return {
-    kind: 'mm',
-    recipient: String((thread && thread.opName) || '').trim(),
-    subject: 'WTB ' + eid,
-    body: 'I Want to buy equip : ' + eid + (name ? ' ' + name : '') + (price ? ' @ ' + price : '')
+    mm: { kind: 'mm', recipient: String((thread && thread.opName) || '').trim(), subject: 'WTB ' + eid, body: body },
+    forum: { kind: 'reply', text: body }
   };
 }
 
@@ -569,7 +598,28 @@ if (/[?&]act=post\b/i.test(window.location.search)) {
   return;
 }
 
-var forumMatch = window.location.href.match(/showforum=(\d+)/);
+// ── Search page (SMS-USR-092) ──
+// https://forums.e-hentai.org/smartsearch-cloud is a plain 404 page of the forum; the script replaces it with the
+// search page, so the address can be typed, bookmarked or reloaded. ?f=WTS / ?f=ISK picks the board (WTS by
+// default). Same origin as the boards, so it reads the same databases and settings.
+var SEARCH_PAGE_PATH = '/smartsearch-cloud';
+var isSearchPage = /^\/smartsearch-cloud\/?$/i.test(window.location.pathname);
+
+// ?f= value -> board id: 'ISK' or '90' is ISK, anything else WTS
+function searchPageForum(query) {
+  var m = String(query || '').match(/[?&]f=([^&#]*)/i);
+  var value = m ? decodeURIComponent(m[1]).trim().toUpperCase() : '';
+  return value === 'ISK' || value === '90' ? '90' : '77';
+}
+
+// Address of the search page for a board; with runNow the keyword goes in the hash (never sent to the server)
+function searchPageUrl(forumId, keyword, useRegEx, runNow) {
+  var url = window.location.origin + SEARCH_PAGE_PATH + '?f=' + (FORUM_LABELS[forumId] || 'WTS');
+  if (!runNow) return url;
+  return url + '#q=' + encodeURIComponent(keyword || '') + (useRegEx ? '&re=1' : '') + '&run=1';
+}
+
+var forumMatch = isSearchPage ? [null, searchPageForum(window.location.search)] : window.location.href.match(/showforum=(\d+)/);
 if (!forumMatch || (forumMatch[1] !== '77' && forumMatch[1] !== '90'))
   return;
 var forum = forumMatch[1];
@@ -692,6 +742,24 @@ var lastStorage = JSON.parse(localStorage[RECENT_KEY]);
 var recentSearches = Array.isArray(lastStorage.recentSearches) ? lastStorage.recentSearches : [];
 var lowestEid = lastStorage.lowestEid || '67180000';
 var include = 0;
+
+if (isSearchPage) {
+  // Replace the forum's 404 page. The bar below keeps Update Database / Settings / Manage Database; the search
+  // controls are built under it by startSearchPage() once every declaration has run.
+  document.head.innerHTML = '';
+  document.body.innerHTML = '';
+  var boardBar = document.body.appendChild(document.createElement('div'));
+  boardBar.className = 'ipbtable';
+  boardBar.style.cssText = 'text-align:left; margin:4px 2px 6px 2px; font:bold 14px arial; color:#23404a;';
+  boardBar.appendChild(document.createTextNode('SmartSearch-Cloud — ' + tl('Board: ')));
+  Object.keys(FORUM_LABELS).forEach(function(id) {
+    var link = boardBar.appendChild(document.createElement(id === forum ? 'span' : 'a'));
+    link.textContent = FORUM_LABELS[id];
+    link.style.marginRight = '10px';
+    if (id === forum) link.style.cssText = 'margin-right:10px; padding:1px 6px; background:#2f5866; color:#fff; border-radius:3px;';
+    else link.href = searchPageUrl(id, '', false, false);
+  });
+}
 
 var headTable = document.querySelector('.ipbtable');
 if (!headTable) return;
@@ -1373,6 +1441,11 @@ openSearchWindowBtn.addEventListener('click', function() {
   openSearchTab(false);
 });
 
+// On the search page the keyword box and the two entry buttons live in the search controls instead
+if (isSearchPage) {
+  [useRE, input, forumHelpBtn, search, openSearchWindowBtn].forEach(function(el) { el.style.display = 'none'; });
+}
+
 function openSearchTab(runNow) {
   settings = loadSettings();
   applyRuntimeSettings();
@@ -1392,20 +1465,19 @@ function openSearchTab(runNow) {
     entryBtn.textContent = tl('String is too short');
     return;
   }
-  // Results open in a new browser tab left at about:blank, so the address bar never shows a forum URL.
-  // The page is built with DOM calls only: document.open()/write() from this page would rewrite the tab URL (SMS-USR-060).
-  var w = win.open('', '_blank');
+  // Results open on the search page in a new tab (SMS-USR-092; until 3.6.0 an about:blank tab, SMS-USR-060)
+  var w = win.open(searchPageUrl(forum, forumQuery, !!useRE.checked, runNow), '_blank');
   if (w === null || w === undefined) {
     error(tl("The browser blocked the new tab, so SmartSearch's results can't be opened. Please allow pop-ups from https://forums.e-hentai.org/"));
-    return;
   }
-  if (w.document.head) w.document.head.innerHTML = '';
-  w.document.body.innerHTML = '';
+}
 
-  // This tab's conditions. They are drafts: nothing is searched until Search is pressed (SMS-USR-062)
+// Builds the search controls and results into the search page `w` (SMS-USR-060 ~ 069, 092)
+function buildSearchPage(w, forumQuery, useRegEx, runNow) {
+  // This page's conditions. They are drafts: nothing is searched until Search is pressed (SMS-USR-062)
   var tabState = emptyEquipFilter();
   tabState.keyword = forumQuery;
-  tabState.useRE = !!useRE.checked;
+  tabState.useRE = !!useRegEx;
   var applySortHook = null;
   function updateTabTitle() {
     w.document.title = (tabState.keyword || tl('Search')) + ' • SmartSearch-Cloud (' + forumLabel + ')';
@@ -1439,7 +1511,7 @@ td {padding:0 10px; overflow:hidden; white-space:nowrap;}
 .main td:nth-child(3) {text-align:right;}
 .main td:nth-child(1), .main td:nth-child(4), .main td:nth-child(5) {text-align:center;}
 .main th:nth-child(5) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
-.main th:nth-child(7) {width:55px;}
+.main th:nth-child(7) {width:110px;}
 .main td:nth-child(7) {text-align:center;}
 .main th:nth-child(8) {width:100px;}
 .main th:nth-child(9) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
@@ -1653,6 +1725,11 @@ a:visited {color:#c06}
   var barSide = barMain.appendChild(mk('div', 'ssBarSide'));
   var eidRow = barSide.appendChild(mk('div', 'ssSideRow'));
   // Filter import / export (SMS-USR-086), left of Lowest EID; the text box opens under the bar
+  // On the search page the forum bar's Update Database button moves here, left of Export (SMS-USR-092)
+  if (isSearchPage && w === window) {
+    updateDbBtn.style.marginLeft = '0';
+    eidRow.appendChild(updateDbBtn);
+  }
   var exportBtn = eidRow.appendChild(mk('button', 'ssBtn', tl('Export')));
   exportBtn.title = tl('Copy these search conditions as text, to keep or share');
   var importBtn = eidRow.appendChild(mk('button', 'ssBtn', tl('Import')));
@@ -1873,8 +1950,8 @@ a:visited {color:#c06}
     resultsDiv.innerHTML = '';
 
     var navStrip = document.getElementById('navstrip');
-    var navText = navStrip ? navStrip.textContent : tl('Forum {0}', forumLabel);
-    resultsDiv.appendChild(w.document.createElement('h3')).textContent = navText + ':\n' + tl('{0} threads saved in {1} database', Object.keys(SmartSearch[forum]).length, forumLabel);
+    var navText = navStrip ? navStrip.textContent + ':\n' : ''; // the search page has no forum nav strip
+    resultsDiv.appendChild(w.document.createElement('h3')).textContent = navText + tl('{0} threads saved in {1} database', Object.keys(SmartSearch[forum]).length, forumLabel);
     var resultsCountDiv = resultsDiv.appendChild(w.document.createElement('div'));
     function resetStatsToggle() {} // stats are columns now (SMS-USR-069): sorting no longer has info rows to drop
 
@@ -2002,7 +2079,7 @@ a:visited {color:#c06}
 
           // WTB (SMS-USR-090): only lines that link an equipment
           var wtbTd = tr.appendChild(w.document.createElement('td'));
-          if (equip && equip.eid) addWtbButton(wtbTd, threadId, thread, equip, priceText);
+          if (equip && equip.eid) addContactButtons(wtbTd, threadId, thread, equip, priceText, line);
 
           var warn1 = false;
           var warn2 = false;
@@ -2235,23 +2312,41 @@ a:visited {color:#c06}
   } // end runSearch
 
   // Opens MoogleMail (or, for the rental / exchange shop, a reply in its thread) filled in for this equipment
-  function addWtbButton(td, threadId, thread, equip, priceText) {
-    var btn = td.appendChild(w.document.createElement('button'));
-    btn.textContent = 'WTB';
-    var preview = buildWtbRequest(thread, equip.eid, '', '');
-    if (preview.kind === 'mm') btn.title = tl('Open MoogleMail with a WTB message to the poster');
-    else if (isShopThread(thread, RENTAL_SHOP)) btn.title = tl('Open a reply in this rental shop thread with the rental request ({0} days)', RENTAL_DAYS);
-    else btn.title = tl('Open a reply in this exchange shop thread with the claim command');
-    btn.addEventListener('click', function() {
-      var item = SmartSearch && SmartSearch.savedEquips ? SmartSearch.savedEquips[equip.eid] : null;
-      var request = buildWtbRequest(thread, equip.eid, item && item.name, priceText);
-      var url;
-      if (request.kind === 'mm') {
-        url = 'https://hentaiverse.org/' + (equip.isIsekai ? 'isekai/' : '') + '?s=Bazaar&ss=mm&filter=new&hvut=disabled';
-      } else {
-        url = 'https://forums.e-hentai.org/index.php?act=post&do=reply_post&f=' + forum + '&t=' + encodeURIComponent(threadId);
+  // MM and Forum buttons (SMS-USR-090, 093): open MoogleMail or a reply in this thread, filled in for this equipment
+  function addContactButtons(td, threadId, thread, equip, priceText, line) {
+    var item = SmartSearch && SmartSearch.savedEquips ? SmartSearch.savedEquips[equip.eid] : null;
+    var requests = buildContactRequests(thread, equip.eid, item && item.name, priceText, lineVisibleText(line));
+    function forumTitle() {
+      if (isShopThread(thread, RENTAL_SHOP)) return tl('Open a reply in this rental shop thread with the rental request ({0} days)', RENTAL_DAYS);
+      if (isShopThread(thread, EXCHANGE_SHOP)) return tl('Open a reply in this exchange shop thread with the claim command');
+      if (/auction/i.test(String(thread.title || ''))) return tl('Open a reply in this auction thread with the item code; add your bid');
+      return tl('Open a reply in this thread with a WTB message');
+    }
+    [['mm', 'MM'], ['forum', tl('Forum')]].forEach(function(way) {
+      var request = requests[way[0]];
+      var btn = td.appendChild(w.document.createElement('button'));
+      btn.textContent = way[1];
+      btn.style.margin = '0 1px';
+      if (request.locked) {
+        btn.disabled = true;
+        btn.title = tl(request.locked);
+        return;
       }
-      win.open(url + storeWtbDraft(Object.assign({ at: Date.now() }, request)), '_blank');
+      if (request.kind === 'mm') {
+        btn.title = request.subject === 'Auction Bid' ? tl('Open MoogleMail with an Auction Bid for {0} at the start price', request.body.split(' ')[0])
+          : tl('Open MoogleMail with a WTB message to the poster');
+      } else {
+        btn.title = forumTitle();
+      }
+      btn.addEventListener('click', function() {
+        var url;
+        if (request.kind === 'mm') {
+          url = 'https://hentaiverse.org/' + (equip.isIsekai ? 'isekai/' : '') + '?s=Bazaar&ss=mm&filter=new&hvut=disabled';
+        } else {
+          url = 'https://forums.e-hentai.org/index.php?act=post&do=reply_post&f=' + forum + '&t=' + encodeURIComponent(threadId);
+        }
+        win.open(url + storeWtbDraft(Object.assign({ at: Date.now() }, request)), '_blank');
+      });
     });
   }
 
@@ -2659,7 +2754,7 @@ async function updateCurrentForumDatabase() {
     settings = latestSettings;
 
     refreshDbButtonLabel();
-    updateDbBtn.style.cssText = 'margin-left:20px; background-color:#33cccc; color:black;';
+    updateDbBtn.style.cssText = (isSearchPage ? '' : 'margin-left:20px; ') + 'background-color:#33cccc; color:black;';
     updateStatusSpan(tl('Update complete ✓ ({0} threads, {1})', Object.keys(json.value).length, source.via));
   } catch (err) {
     console.error('[SmartSearch Update Error]', err);
@@ -3303,5 +3398,25 @@ function clearOldV2Data() {
   }
 }
 
+// Opens the search page: the keyword comes from the hash set by the board's Filter Search (SMS-USR-092)
+function startSearchPage() {
+  var hash = window.location.hash.replace(/^#/, '');
+  var params = {};
+  hash.split('&').forEach(function(part) {
+    var eq = part.indexOf('=');
+    if (eq > 0) {
+      try {
+        params[part.slice(0, eq)] = decodeURIComponent(part.slice(eq + 1));
+      } catch (e) {}
+    }
+  });
+  if (hash) history.replaceState(null, document.title, window.location.pathname + window.location.search);
+  settings = loadSettings();
+  applyRuntimeSettings();
+  var keyword = params.q || '';
+  buildSearchPage(window, keyword, params.re === '1', params.run === '1' && !(keyword.length > 0 && keyword.length < 3));
+}
+
 // Runs after every declaration above has executed (SMS-USR-078)
 clearOldV2Data();
+if (isSearchPage) startSearchPage();
