@@ -4,11 +4,15 @@
 // @namespace   SmartSearch-Cloud
 // @author      Superlatanium, nekolor, ericeric91, claude
 // @include     https://forums.e-hentai.org/index.php*showforum=*
-// @version     3.5.1
+// @include     https://forums.e-hentai.org/index.php?act=post*
+// @include     https://hentaiverse.org/?s=Bazaar&ss=mm&filter=new*
+// @include     https://hentaiverse.org/isekai/?s=Bazaar&ss=mm&filter=new*
+// @version     3.6.0
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
 // @grant       GM_setValue
+// @grant       GM_deleteValue
 // @grant       unsafeWindow
 // @connect     github.com
 // @connect     objects.githubusercontent.com
@@ -19,7 +23,7 @@
 // ==/UserScript==
 
 // Shown in the Settings panel title: read from the header's @version so the two never drift apart (SMS-USR-085)
-var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.5.1';
+var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.6.0';
 
 // Board 78 (WTB) is not supported for now: its posts only describe wanted equipment in free text (SMS-USR-080)
 const FORUM_LABELS = {
@@ -144,8 +148,8 @@ var I18N_ZH = {
   'Price: low to high': '價格：低到高',
   'Level: high to low': '等級：高到低',
   'Level: low to high': '等級：低到高',
-  'ROLL %: high to low': 'ROLL %：高到低',
-  'ROLL %: low to high': 'ROLL %：低到高',
+  'Roll%: high to low': 'Roll%：高到低',
+  'Roll%: low to high': 'Roll%：低到高',
   'Clear filters': '清除篩選',
   'Search the database with the conditions above': '用上方條件搜尋資料庫',
   'Show Stats': '顯示屬性欄',
@@ -215,6 +219,10 @@ var I18N_ZH = {
   'Remove from ignoredThreads': '從已忽略的討論串移除',
   'Remove from ignoredPosts': '從已忽略的貼文移除',
   'Reload interface': '重新載入介面',
+  'Open MoogleMail with a WTB message to the poster': '開啟 MoogleMail，寫好給發文者的 WTB 信',
+  'Open a reply in this rental shop thread with the rental request ({0} days)': '開啟這家租借店主題的回覆頁，填好租借叫號（{0} 天）',
+  'Open a reply in this exchange shop thread with the claim command': '開啟這家交換店主題的回覆頁，填好領取指令',
+  'SmartSearch-Cloud filled this in. Check it, then send it yourself.': 'SmartSearch-Cloud 已自動填好內容，請確認後自行送出。',
   // Settings panel
   '⚙️ SmartSearch-Cloud Settings (v{0} — Current Board: {1})': '⚙️ SmartSearch-Cloud 設定（v{0} — 目前版塊：{1}）',
   'Language: ': '語系：',
@@ -463,6 +471,103 @@ function applyRuntimeSettings() {
 }
 
 const recent_searches_max = 18;
+
+// ── WTB button (SMS-USR-090) ──
+// Shops that take commands as forum replies in their own thread instead of MoogleMail
+var RENTAL_SHOP = { name: 'HVEquipRental', uid: '7912010' }; // rental call: "[<EID>] <N>days"
+var EXCHANGE_SHOP = { name: 'HVEquipExchange', uid: '10063793' }; // exchange claim: "Claim <EID>"
+var RENTAL_DAYS = 7;
+
+function isShopThread(thread, shop) {
+  if (!thread) return false;
+  if (String(thread.opUid || '').trim() === shop.uid) return true;
+  return String(thread.opName || '').trim().toLowerCase() === shop.name.toLowerCase();
+}
+
+// What the WTB button sends for one equipment line. The forum is in English, so these texts are English only.
+// { kind: 'reply', text } for the rental and exchange shops, else { kind: 'mm', recipient, subject, body }
+function buildWtbRequest(thread, eid, equipName, priceText) {
+  if (isShopThread(thread, EXCHANGE_SHOP)) return { kind: 'reply', text: 'Claim ' + eid };
+  if (isShopThread(thread, RENTAL_SHOP)) return { kind: 'reply', text: '[' + eid + '] ' + RENTAL_DAYS + 'days' };
+  var name = String(equipName || '').trim();
+  var price = String(priceText || '').trim();
+  return {
+    kind: 'mm',
+    recipient: String((thread && thread.opName) || '').trim(),
+    subject: 'WTB ' + eid,
+    body: 'I Want to buy equip : ' + eid + (name ? ' ' + name : '') + (price ? ' @ ' + price : '')
+  };
+}
+
+// The results tab stores the draft and opens the page; this script fills it in there. GM storage is shared
+// between the forum and HentaiVerse; the URL hash carries a copy for script managers without it.
+var WTB_DRAFT_KEY = 'SmartSearchCloudWtbDraft';
+var WTB_DRAFT_HASH = '#ss_wtb=';
+var WTB_DRAFT_MAX_AGE_MS = 60 * 1000;
+
+function storeWtbDraft(draft) {
+  try {
+    if (typeof GM_setValue === 'function') GM_setValue(WTB_DRAFT_KEY, JSON.stringify(draft));
+  } catch (e) {}
+  return WTB_DRAFT_HASH + encodeURIComponent(JSON.stringify(draft));
+}
+
+function takeWtbDraft(kind) {
+  var draft = null;
+  try {
+    if (typeof GM_getValue === 'function') {
+      var stored = GM_getValue(WTB_DRAFT_KEY, null);
+      if (stored) {
+        draft = JSON.parse(stored);
+        if (typeof GM_deleteValue === 'function') GM_deleteValue(WTB_DRAFT_KEY);
+      }
+    }
+  } catch (e) {}
+  if (window.location.hash.indexOf(WTB_DRAFT_HASH) === 0) {
+    try {
+      if (!draft) draft = JSON.parse(decodeURIComponent(window.location.hash.slice(WTB_DRAFT_HASH.length)));
+    } catch (e) {}
+    history.replaceState(null, document.title, window.location.pathname + window.location.search);
+  }
+  if (!draft || draft.kind !== kind || !(Date.now() - Number(draft.at) < WTB_DRAFT_MAX_AGE_MS)) return null;
+  return draft;
+}
+
+function setFieldValue(selector, value) {
+  var field = document.querySelector(selector);
+  if (!field || !value) return false;
+  field.value = value;
+  return true;
+}
+
+function showDraftBanner() {
+  var banner = document.body.appendChild(document.createElement('div'));
+  banner.textContent = tl('SmartSearch-Cloud filled this in. Check it, then send it yourself.');
+  banner.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:99999;background:#1b4332;' +
+    'color:#d8f3dc;border:1px solid #40916c;padding:8px 16px;border-radius:6px;font:13px sans-serif;';
+  setTimeout(function() { banner.remove(); }, 8000);
+}
+
+if (window.location.hostname === 'hentaiverse.org') {
+  // MoogleMail compose page (the normal page, and HV Utils' own compose form)
+  var mmDraft = takeWtbDraft('mm');
+  if (mmDraft) {
+    var mmFilled = setFieldValue('input[name="message_to_name"]', mmDraft.recipient);
+    setFieldValue('input[name="message_subject"]', mmDraft.subject);
+    setFieldValue('textarea[name="message_body"]', mmDraft.body);
+    mmFilled = setFieldValue('.hvut-mm-left input[tabindex="1"]', mmDraft.recipient) || mmFilled;
+    setFieldValue('.hvut-mm-left input[tabindex="2"]', mmDraft.subject);
+    setFieldValue('.hvut-mm-left textarea[tabindex="3"]', mmDraft.body);
+    if (mmFilled) showDraftBanner();
+  }
+  return;
+}
+if (/[?&]act=post\b/i.test(window.location.search)) {
+  // Forum reply page: the rental / exchange command goes into the reply box
+  var replyDraft = takeWtbDraft('reply');
+  if (replyDraft && setFieldValue('textarea[name="Post"]', replyDraft.text)) showDraftBanner();
+  return;
+}
 
 var forumMatch = window.location.href.match(/showforum=(\d+)/);
 if (!forumMatch || (forumMatch[1] !== '77' && forumMatch[1] !== '90'))
@@ -1062,16 +1167,13 @@ function passesWtsRules(line, thread, savedEquips) {
   return true;
 }
 
-// Stats columns (SMS-USR-069, 074): [Quality, Type, PAB, ROLL %, Base avg]
+// Stats columns (SMS-USR-069, 074, 091): [Quality, PAB, Roll%, Base avg]
 function statCellTexts(item) {
   var d = describeEquip(item);
-  if (!d) return ['', '', '', '', ''];
-  var catLabel = '';
-  EQUIP_CATEGORIES.forEach(function(c) { if (c.key === d.cat) catLabel = c.label; });
+  if (!d) return ['', '', '', ''];
   var avg = parseFloat(item && item.avg);
   return [
     tl(d.quality),
-    [catLabel || d.cat, d.type].filter(function(x) { return !!x; }).map(function(x) { return tl(x); }).join(' · '),
     d.pab,
     d.pct === null ? '' : d.pct.toFixed(1),
     isNaN(avg) ? '' : avg.toFixed(2)
@@ -1337,19 +1439,21 @@ td {padding:0 10px; overflow:hidden; white-space:nowrap;}
 .main td:nth-child(3) {text-align:right;}
 .main td:nth-child(1), .main td:nth-child(4), .main td:nth-child(5) {text-align:center;}
 .main th:nth-child(5) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
-.main th:nth-child(7) {width:100px;}
-.main th:nth-child(8) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
+.main th:nth-child(7) {width:55px;}
+.main td:nth-child(7) {text-align:center;}
+.main th:nth-child(8) {width:100px;}
 .main th:nth-child(9) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
-.main th:nth-child(10) {width:120px;}
+.main th:nth-child(10) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
 .main th:nth-child(11) {width:55px;}
 .main th:nth-child(12) {width:65px; color:blue; text-decoration:underline; cursor:pointer;}
 .main th:nth-child(13) {width:60px; color:blue; text-decoration:underline; cursor:pointer;}
-.main td:nth-child(12), .main td:nth-child(13) {text-align:right;}
+.main td:nth-child(12) {text-align:center;}
+.main td:nth-child(13) {text-align:right;}
 .main th:nth-child(14) {width:70px;}
 .main .st {display:none;}
 .showStats .main .st {display:table-cell;}
 .main {min-width:1000px;}
-.showStats .main {min-width:1450px;}
+.showStats .main {min-width:1330px;}
 .warn {background:#fdb;}
 .ended {background:#fff;}
 
@@ -1516,7 +1620,7 @@ a:visited {color:#c06}
   var qualitySel = addSelect(barRow1, 'quality', [['', tl('All qualities')]].concat(EQUIP_QUALITIES.map(function(q) { return [q, tl(q)]; })), null);
   addRangeFilter(barRow1, tl('Level'), 'levelMin', 'levelMax', tl('min'), tl('max'));
   addRangeFilter(barRow1, tl('Price'), 'priceMin', 'priceMax', tl('min'), tl('max'));
-  addRangeFilter(barRow1, 'ROLL %', 'rollMin', 'rollMax', '0', '100');
+  addRangeFilter(barRow1, 'Roll%', 'rollMin', 'rollMax', '0', '100');
 
   var barRow2 = barLeft.appendChild(mk('div', 'ssBarRow'));
   var sortSel = addSelect(barRow2, 'sort', [
@@ -1525,8 +1629,8 @@ a:visited {color:#c06}
     ['price-asc', tl('Price: low to high')],
     ['level-desc', tl('Level: high to low')],
     ['level-asc', tl('Level: low to high')],
-    ['roll-desc', tl('ROLL %: high to low')],
-    ['roll-asc', tl('ROLL %: low to high')]
+    ['roll-desc', tl('Roll%: high to low')],
+    ['roll-asc', tl('Roll%: low to high')]
   ], function(mode) {
     if (applySortHook) applySortHook(mode); // re-orders the current results only, no new search
   });
@@ -1535,7 +1639,7 @@ a:visited {color:#c06}
   var barSearch = barRow2.appendChild(mk('button', 'ssBtn ssBtnDark', tl('Search')));
   barSearch.title = tl('Search the database with the conditions above');
   barSearch.addEventListener('click', runSearchFromBar);
-  // Show Stats (SMS-USR-069): toggles the Quality / Type / PAB / ROLL % / Score columns, no new search
+  // Show Stats (SMS-USR-069, 091): toggles the Quality / PAB / Roll% / Base avg columns, no new search
   var statsBtn = barRow2.appendChild(mk('button', 'ssBtn', tl('Show Stats')));
   statsBtn.addEventListener('click', function() {
     tabState.showStats = !tabState.showStats;
@@ -1823,8 +1927,8 @@ a:visited {color:#c06}
     var table = resultsDiv.appendChild(w.document.createElement('table'));
     table.className = 'main';
     table.appendChild(w.document.createElement('thead')).innerHTML = '<tr><th>' + tl('Poster') + '</th><th>' + tl('Thread') + '</th><th>eid</th><th>' + tl('Price') + '</th><th>' + tl('Level') +
-      '</th><th>' + tl('Line content') + '</th><th>' + tl('Thread saved') + '</th><th>' + tl('Post edited') + '</th><th class="st">' + tl('Quality') +
-      '</th><th class="st">' + tl('Type') + '</th><th class="st">PAB</th><th class="st">ROLL %</th><th class="st">Base avg</th><th>' + tl('Ignore') + '</th></tr>';
+      '</th><th>' + tl('Line content') + '</th><th>WTB</th><th>' + tl('Thread saved') + '</th><th>' + tl('Post edited') + '</th><th class="st">' + tl('Quality') +
+      '</th><th class="st">PAB</th><th class="st">Roll%</th><th class="st">Base avg</th><th>' + tl('Ignore') + '</th></tr>';
     resultsDiv.className = tabState.showStats ? 'showStats' : '';
     var tbody = table.appendChild(w.document.createElement('tbody'));
     var now = Date.now();
@@ -1896,6 +2000,10 @@ a:visited {color:#c06}
           let itemEl = tr.appendChild(w.document.createElement('td'));
           appendSafePostLine(w.document, itemEl, line, prevStartsWithS);
 
+          // WTB (SMS-USR-090): only lines that link an equipment
+          var wtbTd = tr.appendChild(w.document.createElement('td'));
+          if (equip && equip.eid) addWtbButton(wtbTd, threadId, thread, equip, priceText);
+
           var warn1 = false;
           var warn2 = false;
           var agoObj = ago(thread.dateSaved);
@@ -1907,7 +2015,7 @@ a:visited {color:#c06}
           warn2 = agoObj[1];
           if (warn1 || warn2)
             tr.className = 'warn';
-          for (var sc = 0; sc < 5; sc++) tr.appendChild(w.document.createElement('td')).className = 'st';
+          for (var sc = 0; sc < 4; sc++) tr.appendChild(w.document.createElement('td')).className = 'st';
           var ignoreBtn = tr.appendChild(w.document.createElement('td')).appendChild(w.document.createElement('button'));
           ignoreBtn.textContent = tl('Ignore');
           ignoreBtn.addEventListener('click', function() {
@@ -1934,7 +2042,7 @@ a:visited {color:#c06}
         tr.dataset.level = item.level || '';
         tr.children[4].textContent = tl(item.level || '');
         statCellTexts(item).forEach(function(text, i) {
-          if (tr.children[8 + i]) tr.children[8 + i].textContent = text;
+          if (tr.children[9 + i]) tr.children[9 + i].textContent = text;
         });
       });
     }
@@ -2053,7 +2161,7 @@ a:visited {color:#c06}
     });
 
     // Sort by date
-    table.children[0].children[0].children[7].addEventListener('click', function() {
+    table.children[0].children[0].children[8].addEventListener('click', function() {
       resetStatsToggle();
       var trs = [];
       for (var i = table.children[1].children.length - 1; i >= 0; i--) {
@@ -2112,10 +2220,10 @@ a:visited {color:#c06}
     }
 
     // Stats column headers sort high to low (SMS-USR-069)
-    [[8, 'quality-desc'], [11, 'roll-desc'], [12, 'avg-desc']].forEach(function(hs) {
+    [[9, 'quality-desc'], [11, 'roll-desc'], [12, 'avg-desc']].forEach(function(hs) {
       table.children[0].children[0].children[hs[0]].addEventListener('click', function() { applySort(hs[1]); });
     });
-    table.children[0].children[0].children[7].click();
+    table.children[0].children[0].children[8].click();
     applySortHook = applySort;
     if (f.sort) applySort(f.sort);
   }, function(dbErr) {
@@ -2125,6 +2233,27 @@ a:visited {color:#c06}
     dbErrHeading.textContent = tl('Failed to open IndexedDB for {0}: {1}', forumLabel, dbErr && dbErr.message ? dbErr.message : tl('Database error'));
   });
   } // end runSearch
+
+  // Opens MoogleMail (or, for the rental / exchange shop, a reply in its thread) filled in for this equipment
+  function addWtbButton(td, threadId, thread, equip, priceText) {
+    var btn = td.appendChild(w.document.createElement('button'));
+    btn.textContent = 'WTB';
+    var preview = buildWtbRequest(thread, equip.eid, '', '');
+    if (preview.kind === 'mm') btn.title = tl('Open MoogleMail with a WTB message to the poster');
+    else if (isShopThread(thread, RENTAL_SHOP)) btn.title = tl('Open a reply in this rental shop thread with the rental request ({0} days)', RENTAL_DAYS);
+    else btn.title = tl('Open a reply in this exchange shop thread with the claim command');
+    btn.addEventListener('click', function() {
+      var item = SmartSearch && SmartSearch.savedEquips ? SmartSearch.savedEquips[equip.eid] : null;
+      var request = buildWtbRequest(thread, equip.eid, item && item.name, priceText);
+      var url;
+      if (request.kind === 'mm') {
+        url = 'https://hentaiverse.org/' + (equip.isIsekai ? 'isekai/' : '') + '?s=Bazaar&ss=mm&filter=new&hvut=disabled';
+      } else {
+        url = 'https://forums.e-hentai.org/index.php?act=post&do=reply_post&f=' + forum + '&t=' + encodeURIComponent(threadId);
+      }
+      win.open(url + storeWtbDraft(Object.assign({ at: Date.now() }, request)), '_blank');
+    });
+  }
 
   var ignoredDiv;
   function makeIgnoreInterface(threadId, post, str) {

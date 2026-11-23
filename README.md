@@ -73,10 +73,13 @@ The database Releases are published by the server; do not edit or delete them by
   搜尋結果開在新分頁，篩選列會固定在頂端；條件在按下 **Search** 時才套用。
 - **Equipment filter**: Category, Type, Prefix, Suffix, Slot and Primary attributes. Choices that cannot occur with what you picked are greyed out.
   **Equipment filter**：分類、類型、字首、字尾、部位與主屬性；與已選條件不可能同時成立的選項會反灰。
-- Quality, Level, Price and ROLL % (base percentage) ranges, and sorting by post time, price, level or ROLL %.
-  品質、等級、價格、ROLL %（Base 百分比）範圍篩選，並可依貼文時間、價格、等級或 ROLL % 排序。
-- **Show Stats** adds Quality, Type, PAB, ROLL % and Base avg columns.
-  **Show Stats** 會加上品質、類型、PAB、ROLL %、Base avg 欄位。
+- Quality, Level, Price and Roll% (base percentage) ranges, and sorting by post time, price, level or Roll%.
+  品質、等級、價格、Roll%（Base 百分比）範圍篩選，並可依貼文時間、價格、等級或 Roll% 排序。
+- **WTB** button on each result opens MoogleMail with a ready-made `WTB <EID>` message to the seller; for the rental and exchange shops it opens a reply in their thread
+  with `[<EID>] 7days` or `Claim <EID>` instead. Nothing is sent until you press Send yourself.
+  每列的 **WTB** 按鈕會開啟 MoogleMail 並填好給賣家的 `WTB <EID>` 信；租借店與交換店則改開該主題的回覆頁並填好 `[<EID>] 7days` 或 `Claim <EID>`。都要你自己按送出。
+- **Show Stats** adds Quality, PAB, Roll% and Base avg columns.
+  **Show Stats** 會加上品質、PAB、Roll%、Base avg 欄位。
 - In WTS, only lines that link a Tradeable equipment held by the poster are shown.
   WTS 只列出連到 Tradeable 裝備、且裝備仍在發文者手上的行。
 - **Export / Import** (top right of the results tab) saves the search conditions as one line of text, to keep or to share;
