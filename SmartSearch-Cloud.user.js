@@ -8,7 +8,7 @@
 // @include     https://forums.e-hentai.org/index.php?act=post*
 // @include     https://hentaiverse.org/?s=Bazaar&ss=mm&filter=new*
 // @include     https://hentaiverse.org/isekai/?s=Bazaar&ss=mm&filter=new*
-// @version     3.7.0
+// @version     3.7.1
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
@@ -24,7 +24,7 @@
 // ==/UserScript==
 
 // Shown in the Settings panel title: read from the header's @version so the two never drift apart (SMS-USR-085)
-var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.7.0';
+var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.7.1';
 
 // Board 78 (WTB) is not supported for now: its posts only describe wanted equipment in free text (SMS-USR-080)
 const FORUM_LABELS = {
@@ -1021,13 +1021,13 @@ function buildSyntaxHelp(d) {
 // ─────────────────────────────────────────────────────────────────────────────
 var EQUIP_QUALITIES = ['Peerless', 'Legendary', 'Magnificent', 'Exquisite', 'Superior', 'Average', 'Fair', 'Crude'];
 var EQUIP_CATEGORIES = [
-  { key: 'One-handed', label: '1H', types: ['Axe', 'Club', 'Dagger', 'Rapier', 'Shortsword', 'Wakizashi'] },
-  { key: 'Two-handed', label: '2H', types: ['Estoc', 'Katana', 'Longsword', 'Mace', 'Scythe', 'Swordchucks'] },
-  { key: 'Staff', label: 'Staff', types: ['Oak', 'Redwood', 'Willow', 'Katalox', 'Ebony'] },
-  { key: 'Shield', label: 'Shield', types: ['Buckler', 'Kite', 'Tower', 'Force'] },
-  { key: 'Cloth', label: 'Cloth', types: ['Cotton', 'Gossamer', 'Ironsilk', 'Phase'] },
-  { key: 'Light', label: 'Light', types: ['Leather', 'Drakehide', 'Kevlar', 'Shade'] },
-  { key: 'Heavy', label: 'Heavy', types: ['Plate', 'Chain', 'Reactive', 'Power'] }
+  { key: 'One-handed', label: '1H', types: ['Rapier', 'Club', 'Axe', 'Shortsword', 'Wakizashi', 'Dagger'] },
+  { key: 'Two-handed', label: '2H', types: ['Estoc', 'Mace', 'Scythe', 'Longsword', 'Katana', 'Swordchucks'] },
+  { key: 'Staff', label: 'Staff', types: ['Oak', 'Willow', 'Katalox', 'Redwood', 'Ebony'] },
+  { key: 'Shield', label: 'Shield', types: ['Force', 'Tower', 'Kite', 'Buckler'] },
+  { key: 'Cloth', label: 'Cloth', types: ['Phase', 'Gossamer', 'Ironsilk', 'Cotton'] },
+  { key: 'Light', label: 'Light', types: ['Shade', 'Drakehide', 'Kevlar', 'Leather'] },
+  { key: 'Heavy', label: 'Heavy', types: ['Power', 'Reactive', 'Chain', 'Plate'] }
 ];
 var EQUIP_ARMOR_CATEGORIES = ['Cloth', 'Light', 'Heavy'];
 var EQUIP_SLOTS = [
@@ -1039,7 +1039,7 @@ var EQUIP_SLOTS = [
 ];
 var EQUIP_PREFIX_GROUPS = [
   { label: 'Weapon / staff', items: ['Ethereal', 'Fiery', 'Arctic', 'Shocking', 'Tempestuous', 'Hallowed', 'Demonic'] },
-  { label: 'Armor / shield', items: ['Radiant', 'Charged', 'Mystic', 'Frugal', 'Reinforced', 'Agile', 'Savage', 'Mithril', 'Shielding'] },
+  { label: 'Armor / shield', items: ['Radiant', 'Charged', 'Mystic', 'Frugal', 'Savage', 'Agile', 'Reinforced', 'Shielding', 'Mithril'] },
   { label: 'Mitigation', items: ['Ruby', 'Cobalt', 'Amber', 'Jade', 'Zircon', 'Onyx'] }
 ];
 // A suffix may sit in more than one group (e.g. the Battlecaster on weapons and on light armor / shields);
@@ -1048,11 +1048,11 @@ var EQUIP_SUFFIX_GROUPS = [
   { label: 'Weapon', items: ['Slaughter', 'Balance', 'Swiftness', 'the Nimble', 'the Battlecaster', 'the Vampire', 'the Illithid', 'the Banshee'] },
   { label: 'Staff / magic', items: ['Destruction', 'Focus', 'Surtr', 'Niflheim', 'Mjolnir', 'Freyr', 'Heimdall', 'Fenrir'] },
   { label: 'Proficiency', items: ['the Elementalist', 'the Heaven-sent', 'the Demon-fiend', 'the Earth-walker', 'the Curse-weaver'] },
-  { label: 'Defence', items: ['Protection', 'Warding', 'Dampening', 'Deflection', 'Stoneskin', 'Negation', 'the Barrier', 'the Fleet', 'the Shadowdancer', 'the Arcanist', 'the Battlecaster', 'Slaughter', 'Balance', 'the Nimble'] },
+  { label: 'Defence', items: ['Slaughter', 'Balance', 'the Barrier', 'the Nimble', 'the Battlecaster', 'the Shadowdancer', 'the Fleet', 'the Arcanist', 'Negation', 'Protection', 'Warding', 'Dampening', 'Stoneskin', 'Deflection'] },
   { label: 'Mitigation', items: ['the Fire-eater', 'the Frost-born', 'the Thunder-child', 'the Wind-waker', 'the Thrice-blessed', 'the Spirit-ward'] },
-  { label: 'Primary attributes', items: ['the Ox', 'the Raccoon', 'the Cheetah', 'the Fox', 'the Owl', 'the Turtle'] }
+  { label: 'Primary attributes', items: ['the Ox', 'the Raccoon', 'the Cheetah', 'the Turtle', 'the Fox', 'the Owl'] }
 ];
-var EQUIP_PRIMARY_STATS = ['S', 'D', 'E', 'A', 'I', 'W'];
+var EQUIP_PRIMARY_STATS = ['S', 'D', 'A', 'E', 'I', 'W'];
 // Which equipment types each prefix / suffix occurs on (SMS-USR-066). Generated from the backend equip cache
 // (11204 equips, 2026-11-21); types with < 100 samples also inherit every affix seen in their category.
 var EQUIP_AFFIX_TYPES = {
