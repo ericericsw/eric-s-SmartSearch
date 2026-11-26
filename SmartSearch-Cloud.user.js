@@ -8,7 +8,7 @@
 // @include     https://forums.e-hentai.org/index.php?act=post*
 // @include     https://hentaiverse.org/?s=Bazaar&ss=mm&filter=new*
 // @include     https://hentaiverse.org/isekai/?s=Bazaar&ss=mm&filter=new*
-// @version     3.7.1
+// @version     3.7.2
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
@@ -24,7 +24,7 @@
 // ==/UserScript==
 
 // Shown in the Settings panel title: read from the header's @version so the two never drift apart (SMS-USR-085)
-var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.7.1';
+var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.7.2';
 
 // Board 78 (WTB) is not supported for now: its posts only describe wanted equipment in free text (SMS-USR-080)
 const FORUM_LABELS = {
@@ -883,6 +883,14 @@ function priorityShopRank(thread, shops) {
     if ((uid && uid === tUid) || (name && name === tName)) return i;
   }
   return -1;
+}
+
+// Thread titles that mark a closed / ended shop or auction (SMS-USR-095):
+// match whole words only so names like "Senda's" or words like "Legend" / "Vendor" do not trigger `.ended`.
+var ENDED_THREAD_TITLE_RE = /\b(?:closed?|deleted?|end(?:ed)?|done)\b/i;
+
+function isEndedThreadTitle(title) {
+  return ENDED_THREAD_TITLE_RE.test(String(title || ''));
 }
 
 function getEquipFromLink(href) {
@@ -2062,7 +2070,7 @@ a:visited {color:#c06}
           titleTd.appendChild(a);
 
           titleTd.title = thread.title;
-          if (/close/i.test(thread.title) || /delete/i.test(thread.title) || /end/i.test(thread.title) || /done/i.test(thread.title))
+          if (isEndedThreadTitle(thread.title))
             tr.className = 'ended';
           var eidTd = tr.appendChild(w.document.createElement('td'));
           var equip = getEquipFromLink(line);
