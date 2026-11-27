@@ -94,6 +94,8 @@ The database Releases are published by the server; do not edit or delete them by
   Lowest EID 與討論串標題過濾、忽略討論串或貼文，以及各版塊資料庫的備份／還原／刪除。
 - **Priority Shops** (in Settings): shop owners by name or UID; their lines are listed first in the results, in the order you drag them into, whatever sort you pick.
   設定中的 **優先店家**：輸入店主名稱或 UID，這些店家的裝備依你拖曳排好的順序排在搜尋結果最前面，不論選哪種排序。
+- **Consecutive shop-owner folding**: when the same poster appears in consecutive rows, a `-` / `+` button on the left collapses or expands that group (showing `(+N)` hidden rows when collapsed), alongside **Collapse All** and **Expand All** buttons. Re-sorting expands everything first and regroups in the new order.
+  **連續同店主折疊**：同一店主連續出現時，最左邊有 `-`／`+` 按鈕可折疊或展開該區段（折疊時顯示 `(+N)` 隱藏筆數），篩選列另提供 **全部摺疊** 與 **全部展開** 按鈕。重新排序時會先全部展開，再依新順序重新分組。
 - Settings: language (English by default; 中文 shows the whole script in Chinese), Full Rebuild or Incremental update, exclude pinned threads, hide locked threads, show struck-out lines,
   wild guess prices without units, highlight old posts, and a list of posters (UID or name) to exclude.
   設定：語系（預設英文，選「中文」時整個腳本顯示中文）、完全重建或增量合併、排除置頂討論串、隱藏已鎖定討論串、顯示被刪除線劃掉的行、寬鬆猜測沒有單位的價格、標示過舊的貼文，以及要排除的發文者（UID 或名稱）。
