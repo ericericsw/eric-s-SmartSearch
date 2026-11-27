@@ -8,7 +8,7 @@
 // @include     https://forums.e-hentai.org/index.php?act=post*
 // @include     https://hentaiverse.org/?s=Bazaar&ss=mm&filter=new*
 // @include     https://hentaiverse.org/isekai/?s=Bazaar&ss=mm&filter=new*
-// @version     3.7.2
+// @version     3.8.0
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @grant       GM_getValue
@@ -24,7 +24,7 @@
 // ==/UserScript==
 
 // Shown in the Settings panel title: read from the header's @version so the two never drift apart (SMS-USR-085)
-var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.7.2';
+var version = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || '3.8.0';
 
 // Board 78 (WTB) is not supported for now: its posts only describe wanted equipment in free text (SMS-USR-080)
 const FORUM_LABELS = {
@@ -155,6 +155,12 @@ var I18N_ZH = {
   'Search the database with the conditions above': '用上方條件搜尋資料庫',
   'Show Stats': '顯示屬性欄',
   'Hide Stats': '隱藏屬性欄',
+  'Collapse All': '全部摺疊',
+  'Expand All': '全部展開',
+  'Collapse consecutive rows from the same poster': '摺疊連續出現的同一店主',
+  'Expand all collapsed poster groups': '展開所有已摺疊的店主群組',
+  'Collapse {0} more from {1}': '摺疊 {1} 的另外 {0} 筆',
+  'Expand {0} hidden from {1}': '展開 {1} 隱藏的 {0} 筆',
   '{0} match': '{0} 筆符合',
   'Export': '匯出',
   'Import': '匯入',
@@ -893,6 +899,33 @@ function isEndedThreadTitle(title) {
   return ENDED_THREAD_TITLE_RE.test(String(title || ''));
 }
 
+// Identity key for collapsing consecutive rows from the same shop owner (SMS-USR-096).
+// Prefer UID so renamed posters still group together; fall back to case-insensitive name.
+function shopOwnerKey(thread) {
+  if (!thread) return '';
+  var uid = String(thread.opUid || '').trim();
+  if (uid) return 'uid:' + uid;
+  var name = String(thread.opName || '').trim().toLowerCase();
+  return name ? 'name:' + name : '';
+}
+
+// Maximal contiguous runs of >= 2 rows sharing a non-empty owner key: [{ start, end }] (inclusive).
+function findConsecutiveOwnerRuns(ownerKeys) {
+  var runs = [];
+  if (!Array.isArray(ownerKeys) || ownerKeys.length < 2) return runs;
+  var i = 0;
+  while (i < ownerKeys.length) {
+    var key = ownerKeys[i];
+    var j = i + 1;
+    if (key) {
+      while (j < ownerKeys.length && ownerKeys[j] === key) j++;
+      if (j - i >= 2) runs.push({ start: i, end: j - 1 });
+    }
+    i = j;
+  }
+  return runs;
+}
+
 function getEquipFromLink(href) {
   if (!href) return false;
   var isIsekai = /\/isekai\//i.test(href);
@@ -1487,6 +1520,7 @@ function buildSearchPage(w, forumQuery, useRegEx, runNow) {
   tabState.keyword = forumQuery;
   tabState.useRE = !!useRegEx;
   var applySortHook = null;
+  var ownerFoldHook = null;
   function updateTabTitle() {
     w.document.title = (tabState.keyword || tl('Search')) + ' • SmartSearch-Cloud (' + forumLabel + ')';
   }
@@ -1512,28 +1546,34 @@ table {border-collapse:collapse; width:100%; table-layout:fixed; margin-top:20px
 tr {border:1px solid black; font-size:80%;}
 tr:hover {background-color:#ccd9ff;}
 td {padding:0 10px; overflow:hidden; white-space:nowrap;}
-.main th:nth-child(1) {width:100px;}
-.main th:nth-child(2) {width:220px;}
-.main th:nth-child(3) {width:80px; color:blue; text-decoration:underline; cursor:pointer;}
-.main th:nth-child(4) {width:70px; color:blue; text-decoration:underline; cursor:pointer;}
-.main td:nth-child(3) {text-align:right;}
-.main td:nth-child(1), .main td:nth-child(4), .main td:nth-child(5) {text-align:center;}
-.main th:nth-child(5) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
-.main th:nth-child(7) {width:110px;}
-.main td:nth-child(7) {text-align:center;}
-.main th:nth-child(8) {width:100px;}
-.main th:nth-child(9) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
+.main th:nth-child(1) {width:64px; padding:0 4px;}
+.main td:nth-child(1) {text-align:left; padding:0 4px;}
+.main th:nth-child(2) {width:100px;}
+.main th:nth-child(3) {width:220px;}
+.main th:nth-child(4) {width:80px; color:blue; text-decoration:underline; cursor:pointer;}
+.main th:nth-child(5) {width:70px; color:blue; text-decoration:underline; cursor:pointer;}
+.main td:nth-child(4) {text-align:right;}
+.main td:nth-child(2), .main td:nth-child(5), .main td:nth-child(6) {text-align:center;}
+.main th:nth-child(6) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
+.main th:nth-child(8) {width:110px;}
+.main td:nth-child(8) {text-align:center;}
+.main th:nth-child(9) {width:100px;}
 .main th:nth-child(10) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
-.main th:nth-child(11) {width:55px;}
-.main th:nth-child(12) {width:65px; color:blue; text-decoration:underline; cursor:pointer;}
-.main th:nth-child(13) {width:60px; color:blue; text-decoration:underline; cursor:pointer;}
-.main td:nth-child(12) {text-align:center;}
-.main td:nth-child(13) {text-align:right;}
-.main th:nth-child(14) {width:70px;}
+.main th:nth-child(11) {width:90px; color:blue; text-decoration:underline; cursor:pointer;}
+.main th:nth-child(12) {width:55px;}
+.main th:nth-child(13) {width:65px; color:blue; text-decoration:underline; cursor:pointer;}
+.main th:nth-child(14) {width:60px; color:blue; text-decoration:underline; cursor:pointer;}
+.main td:nth-child(13) {text-align:center;}
+.main td:nth-child(14) {text-align:right;}
+.main th:nth-child(15) {width:70px;}
 .main .st {display:none;}
 .showStats .main .st {display:table-cell;}
-.main {min-width:1000px;}
-.showStats .main {min-width:1330px;}
+.main {min-width:1060px;}
+.showStats .main {min-width:1390px;}
+.ssFoldBtn {width:18px; height:18px; line-height:14px; padding:0; border:1px solid #6b8a94; border-radius:3px; background:#f4f9fa; color:#23404a; font-family:monospace; font-weight:bold; font-size:13px; cursor:pointer; vertical-align:middle;}
+.ssFoldBtn:hover {background:#2f5866; color:#fff; border-color:#2f5866;}
+.ssFoldCount {margin-left:3px; font-size:11px; color:#2f5866; font-weight:bold; cursor:pointer; vertical-align:middle;}
+tr.ssFolded {display:none;}
 .warn {background:#fdb;}
 .ended {background:#fff;}
 
@@ -1725,6 +1765,16 @@ a:visited {color:#c06}
     tabState.showStats = !tabState.showStats;
     resultsDiv.className = tabState.showStats ? 'showStats' : '';
     statsBtn.textContent = tabState.showStats ? tl('Hide Stats') : tl('Show Stats');
+  });
+  var collapseAllBtn = barRow2.appendChild(mk('button', 'ssBtn', tl('Collapse All')));
+  collapseAllBtn.title = tl('Collapse consecutive rows from the same poster');
+  collapseAllBtn.addEventListener('click', function() {
+    if (ownerFoldHook) ownerFoldHook.collapseAll();
+  });
+  var expandAllBtn = barRow2.appendChild(mk('button', 'ssBtn', tl('Expand All')));
+  expandAllBtn.title = tl('Expand all collapsed poster groups');
+  expandAllBtn.addEventListener('click', function() {
+    if (ownerFoldHook) ownerFoldHook.expandAll();
   });
   var barCount = barRow2.appendChild(mk('b', 'ssLbl'));
   matchCountEls.push(barCount);
@@ -1947,6 +1997,7 @@ a:visited {color:#c06}
   var f = JSON.parse(JSON.stringify(tabState)); // conditions of this search
   var filterActive = equipFilterIsActive(f);
   applySortHook = null;
+  ownerFoldHook = null;
   showResultsMessage(tl('Searching...'), false);
   updateMatchCount('…');
 
@@ -1976,7 +2027,7 @@ a:visited {color:#c06}
         if (tr.children[0].tagName === 'TH' || tr.className === 'info')
           return;
         tr.style.display = '';
-        var eid = parseInt(tr.children[2].textContent, 10);
+        var eid = parseInt(tr.children[3].textContent, 10);
         // Plain-text lines without equipment URLs have empty eid (isNaN), so they are NEVER hidden by lowestEid
         if (!isNaN(eid) && eid < activeLowest) {
           tr.style.display = 'none';
@@ -1984,10 +2035,10 @@ a:visited {color:#c06}
         }
         if (filterThreadInput.value) {
           var filterVal = filterThreadInput.value.toLowerCase();
-          if (include === -1 && tr.children[1].textContent.toLowerCase().indexOf(filterVal) !== -1) {
+          if (include === -1 && tr.children[2].textContent.toLowerCase().indexOf(filterVal) !== -1) {
             tr.style.display = 'none';
             hideTitleCount++;
-          } else if (include === 1 && tr.children[1].textContent.toLowerCase().indexOf(filterVal) === -1) {
+          } else if (include === 1 && tr.children[2].textContent.toLowerCase().indexOf(filterVal) === -1) {
             tr.style.display = 'none';
             hideTitleCount++;
           }
@@ -2011,7 +2062,7 @@ a:visited {color:#c06}
 
     var table = resultsDiv.appendChild(w.document.createElement('table'));
     table.className = 'main';
-    table.appendChild(w.document.createElement('thead')).innerHTML = '<tr><th>' + tl('Poster') + '</th><th>' + tl('Thread') + '</th><th>eid</th><th>' + tl('Price') + '</th><th>' + tl('Level') +
+    table.appendChild(w.document.createElement('thead')).innerHTML = '<tr><th></th><th>' + tl('Poster') + '</th><th>' + tl('Thread') + '</th><th>eid</th><th>' + tl('Price') + '</th><th>' + tl('Level') +
       '</th><th>' + tl('Line content') + '</th><th>WTB</th><th>' + tl('Thread saved') + '</th><th>' + tl('Post edited') + '</th><th class="st">' + tl('Quality') +
       '</th><th class="st">PAB</th><th class="st">Roll%</th><th class="st">Base avg</th><th>' + tl('Ignore') + '</th></tr>';
     resultsDiv.className = tabState.showStats ? 'showStats' : '';
@@ -2060,6 +2111,8 @@ a:visited {color:#c06}
           resultsCount++;
           var tr = tbody.appendChild(w.document.createElement('tr'));
           tr.dataset.prio = String(priorityShopRank(thread, settings.priorityShops));
+          tr.dataset.owner = shopOwnerKey(thread);
+          tr.appendChild(w.document.createElement('td'));
           tr.appendChild(w.document.createElement('td')).textContent = thread.opName;
           var titleTd = tr.appendChild(w.document.createElement('td'));
 
@@ -2114,8 +2167,8 @@ a:visited {color:#c06}
 
     function refreshLevels() {
       [].slice.call(tbody.children).forEach(function(tr) {
-        if (!tr.children || tr.children.length < 6 || tr.className === 'info') return;
-        var a = tr.children[5].getElementsByTagName('a');
+        if (!tr.children || tr.children.length < 7 || tr.className === 'info') return;
+        var a = tr.children[6].getElementsByTagName('a');
         if (a.length === 0)
           return;
         var equip = getEquipFromLink(a[0].href);
@@ -2125,9 +2178,9 @@ a:visited {color:#c06}
         if (!item)
           return;
         tr.dataset.level = item.level || '';
-        tr.children[4].textContent = tl(item.level || '');
+        tr.children[5].textContent = tl(item.level || '');
         statCellTexts(item).forEach(function(text, i) {
-          if (tr.children[9 + i]) tr.children[9 + i].textContent = text;
+          if (tr.children[10 + i]) tr.children[10 + i].textContent = text;
         });
       });
     }
@@ -2159,9 +2212,80 @@ a:visited {color:#c06}
       };
     }
 
+    // Consecutive same-owner folding (SMS-USR-096):
+    // Always uses CSS class `.ssFolded` (never `tr.style.display`) so filter-hidden rows stay hidden.
+    // Sorting calls `resetOwnerGroups()` first to expand everything, sorts, then calls `rebuildOwnerGroups()`
+    // so runs are recomputed in the new order and start expanded by default.
+    var ownerGroups = [];
+    function setGroupCollapsed(group, collapsed) {
+      group.collapsed = !!collapsed;
+      group.followers.forEach(function(tr) {
+        tr.classList.toggle('ssFolded', group.collapsed);
+      });
+      group.leader.classList.toggle('ssGroupCollapsed', group.collapsed);
+      group.btn.textContent = group.collapsed ? '+' : '-';
+      var tip = group.collapsed
+        ? tl('Expand {0} hidden from {1}', group.followers.length, group.ownerLabel)
+        : tl('Collapse {0} more from {1}', group.followers.length, group.ownerLabel);
+      group.btn.title = tip;
+      group.badge.title = tip;
+      group.badge.style.display = group.collapsed ? '' : 'none';
+    }
+    function resetOwnerGroups() {
+      ownerGroups = [];
+      [].slice.call(tbody.children).forEach(function(tr) {
+        tr.classList.remove('ssFolded', 'ssGroupCollapsed');
+        if (tr.children[0]) tr.children[0].innerHTML = '';
+      });
+    }
+    function rebuildOwnerGroups() {
+      resetOwnerGroups();
+      var visibleRows = [].slice.call(tbody.children).filter(function(tr) {
+        return tr.className !== 'info' && tr.style.display !== 'none';
+      });
+      var runs = findConsecutiveOwnerRuns(visibleRows.map(function(tr) { return tr.dataset.owner || ''; }));
+      runs.forEach(function(run) {
+        var leader = visibleRows[run.start];
+        var followers = visibleRows.slice(run.start + 1, run.end + 1);
+        var foldTd = leader.children[0];
+        if (!foldTd || !followers.length) return;
+        var ownerLabel = leader.children[1] ? leader.children[1].textContent : '';
+        var btn = w.document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ssFoldBtn';
+        var badge = w.document.createElement('span');
+        badge.className = 'ssFoldCount';
+        badge.textContent = '(+' + followers.length + ')';
+        foldTd.appendChild(btn);
+        foldTd.appendChild(badge);
+        var group = {
+          leader: leader,
+          followers: followers,
+          btn: btn,
+          badge: badge,
+          ownerLabel: ownerLabel,
+          collapsed: false
+        };
+        function toggleGroup() {
+          setGroupCollapsed(group, !group.collapsed);
+        }
+        btn.addEventListener('click', toggleGroup);
+        badge.addEventListener('click', toggleGroup);
+        setGroupCollapsed(group, false);
+        ownerGroups.push(group);
+      });
+    }
+    function collapseAllOwnerGroups() {
+      ownerGroups.forEach(function(group) { setGroupCollapsed(group, true); });
+    }
+    function expandAllOwnerGroups() {
+      ownerGroups.forEach(function(group) { setGroupCollapsed(group, false); });
+    }
+
     // Sort by level
-    table.children[0].children[0].children[4].addEventListener('click', function() {
+    table.children[0].children[0].children[5].addEventListener('click', function() {
       resetStatsToggle();
+      resetOwnerGroups();
       var trs = [];
       for (var i = table.children[1].children.length - 1; i >= 0; i--) {
         var tr = table.children[1].children[i];
@@ -2191,11 +2315,13 @@ a:visited {color:#c06}
       trs.forEach(function(tr) {
         table.children[1].appendChild(tr);
       });
+      rebuildOwnerGroups();
     });
 
     // Sort by price
-    table.children[0].children[0].children[3].addEventListener('click', function() {
+    table.children[0].children[0].children[4].addEventListener('click', function() {
       resetStatsToggle();
+      resetOwnerGroups();
       var trs = [];
       for (var i = table.children[1].children.length - 1; i >= 0; i--) {
         var tr = table.children[1].children[i];
@@ -2204,7 +2330,7 @@ a:visited {color:#c06}
         table.children[1].removeChild(tr);
       }
       trs.sort(byPriority(function(a, b) {
-        return priceValue(b.children[3].textContent) - priceValue(a.children[3].textContent);
+        return priceValue(b.children[4].textContent) - priceValue(a.children[4].textContent);
       }));
       function priceValue(priceText) {
         if (!priceText)
@@ -2225,11 +2351,13 @@ a:visited {color:#c06}
       trs.forEach(function(tr) {
         table.children[1].appendChild(tr);
       });
+      rebuildOwnerGroups();
     });
 
     // Sort by eid
-    table.children[0].children[0].children[2].addEventListener('click', function() {
+    table.children[0].children[0].children[3].addEventListener('click', function() {
       resetStatsToggle();
+      resetOwnerGroups();
       var trs = [];
       for (var i = table.children[1].children.length - 1; i >= 0; i--) {
         var tr = table.children[1].children[i];
@@ -2238,16 +2366,18 @@ a:visited {color:#c06}
         table.children[1].removeChild(tr);
       }
       trs.sort(byPriority(function(a, b) {
-        return parseInt(b.children[2].textContent || 0, 10) - parseInt(a.children[2].textContent || 0, 10);
+        return parseInt(b.children[3].textContent || 0, 10) - parseInt(a.children[3].textContent || 0, 10);
       }));
       trs.forEach(function(tr) {
         table.children[1].appendChild(tr);
       });
+      rebuildOwnerGroups();
     });
 
     // Sort by date
-    table.children[0].children[0].children[8].addEventListener('click', function() {
+    table.children[0].children[0].children[9].addEventListener('click', function() {
       resetStatsToggle();
+      resetOwnerGroups();
       var trs = [];
       for (var i = table.children[1].children.length - 1; i >= 0; i--) {
         var tr = table.children[1].children[i];
@@ -2261,9 +2391,11 @@ a:visited {color:#c06}
       trs.forEach(function(tr) {
         table.children[1].appendChild(tr);
       });
+      rebuildOwnerGroups();
     });
     function applySort(mode) {
       resetStatsToggle();
+      resetOwnerGroups();
       var trs = [];
       [].slice.call(tbody.children).forEach(function(tr) {
         tbody.removeChild(tr);
@@ -2273,20 +2405,20 @@ a:visited {color:#c06}
         if (mode.indexOf('price') === 0)
           return tr.dataset.price ? Number(tr.dataset.price) : null;
         if (mode.indexOf('level') === 0) {
-          var lvl = tr.children[4] ? tr.children[4].textContent : '';
+          var lvl = tr.children[5] ? tr.children[5].textContent : '';
           return /^\d+$/.test(lvl) ? parseInt(lvl, 10) : null;
         }
         if (mode.indexOf('roll') === 0) {
-          var rowEid = tr.children[2] ? tr.children[2].textContent : '';
+          var rowEid = tr.children[3] ? tr.children[3].textContent : '';
           var d = rowEid ? describeEquip(SmartSearch.savedEquips[rowEid]) : null;
           return d ? d.pct : null;
         }
         if (mode.indexOf('avg') === 0) {
-          var av = tr.children[12] ? parseFloat(tr.children[12].textContent) : NaN;
+          var av = tr.children[13] ? parseFloat(tr.children[13].textContent) : NaN;
           return isNaN(av) ? null : av;
         }
         if (mode.indexOf('quality') === 0) {
-          var qEid = tr.children[2] ? tr.children[2].textContent : '';
+          var qEid = tr.children[3] ? tr.children[3].textContent : '';
           var qd = qEid ? describeEquip(SmartSearch.savedEquips[qEid]) : null;
           var qi = qd ? EQUIP_QUALITIES.indexOf(qd.quality) : -1;
           return qi === -1 ? null : EQUIP_QUALITIES.length - qi; // Peerless first
@@ -2302,14 +2434,16 @@ a:visited {color:#c06}
         return asc ? ka - kb : kb - ka;
       }));
       trs.forEach(function(tr) { tbody.appendChild(tr); });
+      rebuildOwnerGroups();
     }
 
     // Stats column headers sort high to low (SMS-USR-069)
-    [[9, 'quality-desc'], [11, 'roll-desc'], [12, 'avg-desc']].forEach(function(hs) {
+    [[10, 'quality-desc'], [12, 'roll-desc'], [13, 'avg-desc']].forEach(function(hs) {
       table.children[0].children[0].children[hs[0]].addEventListener('click', function() { applySort(hs[1]); });
     });
-    table.children[0].children[0].children[8].click();
+    table.children[0].children[0].children[9].click();
     applySortHook = applySort;
+    ownerFoldHook = { collapseAll: collapseAllOwnerGroups, expandAll: expandAllOwnerGroups };
     if (f.sort) applySort(f.sort);
   }, function(dbErr) {
     resultsDiv.innerHTML = '';
